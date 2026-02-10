@@ -52,6 +52,7 @@ interface ArenaContextValue {
   loading: boolean;
   error: string | null;
   clearError: () => void;
+  connectionStep: string | null;
 }
 
 const ArenaContext = createContext<ArenaContextValue | null>(null);
@@ -75,6 +76,7 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
   const [gameState, setGameState] = useState<PlayerGameState | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [connectionStep, setConnectionStep] = useState<string | null>(null);
 
   // Polling interval ref
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -88,6 +90,7 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
         status: ConnectionStatus.Connecting,
         error: null,
       }));
+      setConnectionStep('Connecting to MetaMask...');
 
       // 1. Connect MetaMask — this is the user's IDENTITY (EVM address)
       const account = await metamask.connectMetaMask();
@@ -96,7 +99,11 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
 
       // 2. Initialize Linera WASM and connect to Conway testnet
       //    PrivateKey signer is persisted in localStorage keyed by MetaMask address
+      //    Set progress callback so UI shows each step
+      lineraClient.setProgressCallback((step) => setConnectionStep(step));
       const result = await lineraClient.connectToLinera(evmAddress);
+      lineraClient.setProgressCallback(null);
+      setConnectionStep(null);
       console.log('[Arena] Linera connected, chain:', result.chainId, 'signer:', result.signerAddress);
 
       // Use MetaMask address as the display identity
@@ -136,6 +143,8 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Connection failed';
       console.error('[Arena] Connection failed:', message);
+      lineraClient.setProgressCallback(null);
+      setConnectionStep(null);
       setConnection({
         status: ConnectionStatus.Error,
         address: null,
@@ -341,6 +350,7 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
     loading,
     error,
     clearError,
+    connectionStep,
   };
 
   return (

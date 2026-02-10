@@ -26,9 +26,37 @@ const FAUCET_URL =
 const APP_ID = import.meta.env.VITE_APP_ID || '';
 const HUB_CHAIN_ID = import.meta.env.VITE_HUB_CHAIN_ID || '';
 
+// ── Timeout Helper ───────────────────────────────────────────────────────
+
+/**
+ * Race a promise against a timeout. If the timeout fires first, reject with message.
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => { clearTimeout(timer); resolve(v); },
+      (e) => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
+
 // ── Session Persistence ──────────────────────────────────────────────────
 
 const SESSION_STORAGE_KEY = 'fridaychain_arena_session';
+
+// Connection progress callback for UI feedback
+type ProgressCallback = (step: string) => void;
+let _onProgress: ProgressCallback | null = null;
+
+export function setProgressCallback(cb: ProgressCallback | null): void {
+  _onProgress = cb;
+}
+
+function reportProgress(step: string): void {
+  console.log(`[Linera] ${step}`);
+  if (_onProgress) _onProgress(step);
+}
 
 interface StoredSession {
   privateKeyHex: string;
@@ -131,11 +159,11 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
 
   try {
     // 1. Create faucet (sync constructor)
-    console.log('[Linera] Step 1: Creating faucet...');
+    reportProgress('Connecting to Linera faucet...');
     const faucet = new lineraModule.Faucet(FAUCET_URL);
 
     // 2. Create wallet from faucet (fetches genesis config)
-    console.log('[Linera] Step 2: Creating wallet from faucet...');
+    reportProgress('Creating wallet...');
     const wallet = await faucet.createWallet();
     console.log('[Linera] Wallet created');
 
@@ -146,13 +174,13 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
 
     if (stored?.privateKeyHex) {
       // RESTORE: Same signer address as before
-      console.log('[Linera] Step 3: Restoring PrivateKey signer from localStorage...');
+      reportProgress('Restoring your identity...');
       signer = new lineraModule.signer.PrivateKey(stored.privateKeyHex);
       privateKeyHex = stored.privateKeyHex;
       console.log('[Linera] Restored signer address:', signer.address());
     } else {
       // FIRST TIME: Generate random key and derive hex for storage
-      console.log('[Linera] Step 3: Creating new PrivateKey signer...');
+      reportProgress('Creating new blockchain identity...');
       // Generate 32 random bytes as a private key hex
       const keyBytes = new Uint8Array(32);
       crypto.getRandomValues(keyBytes);
@@ -165,7 +193,7 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
     signerAddress = owner.toString();
 
     // 4. Claim a microchain from the faucet
-    console.log('[Linera] Step 4: Claiming chain from faucet...');
+    reportProgress('Claiming your microchain...');
     const chainId = await faucet.claimChain(wallet, owner);
     userChainId = chainId.toString();
     console.log('[Linera] Chain claimed:', userChainId);
@@ -181,28 +209,50 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
     });
 
     // 6. Create client connected to the network
-    console.log('[Linera] Step 5: Creating client...');
-    lineraClient = await new lineraModule.Client(wallet, signer);
+    // This step downloads application bytecodes from validators — can take 30-90s
+    reportProgress('Syncing with blockchain validators (this may take a minute)...');
+    lineraClient = await withTimeout(
+      new lineraModule.Client(wallet, signer),
+      120_000,
+      'Client creation timed out — Conway testnet validators may be slow. Please try again.',
+    );
     console.log('[Linera] Client created');
 
     // 7. Get the Chain handle
-    console.log('[Linera] Step 6: Getting chain handle...');
-    lineraChain = await lineraClient.chain(userChainId);
+    reportProgress('Connecting to your chain...');
+    lineraChain = await withTimeout(
+      lineraClient.chain(userChainId),
+      60_000,
+      'Failed to get chain handle — validators may be slow.',
+    );
     console.log('[Linera] Chain handle obtained');
 
     // 8. Get the Application handle for queries/mutations on player's chain
     if (APP_ID) {
-      console.log('[Linera] Step 7: Getting application handle for:', APP_ID);
-      lineraApp = await lineraChain.application(APP_ID);
+      reportProgress('Loading application...');
+      lineraApp = await withTimeout(
+        lineraChain.application(APP_ID),
+        60_000,
+        'Failed to get application handle — try refreshing the page.',
+      );
       console.log('[Linera] Application handle obtained');
     }
 
     // 9. Get the Hub chain's application handle for tournament/leaderboard queries
     if (APP_ID && HUB_CHAIN_ID) {
       try {
-        console.log('[Linera] Step 8: Getting Hub chain application handle...');
-        const hubChain = await lineraClient.chain(HUB_CHAIN_ID);
-        hubApp = await hubChain.application(APP_ID);
+        reportProgress('Connecting to tournament hub...');
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const hubChain: any = await withTimeout(
+          lineraClient.chain(HUB_CHAIN_ID),
+          60_000,
+          'Hub chain sync timed out',
+        );
+        hubApp = await withTimeout(
+          hubChain.application(APP_ID),
+          60_000,
+          'Hub app handle timed out',
+        );
         console.log('[Linera] Hub application handle obtained');
       } catch (err) {
         console.warn('[Linera] Failed to get Hub app handle (will fall back to player chain):', err);

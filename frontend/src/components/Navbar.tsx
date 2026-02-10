@@ -11,11 +11,12 @@ import {
   Wallet,
   LogOut,
   Zap,
+  Loader2,
 } from 'lucide-react';
 import ArenaLogo from './ArenaLogo';
 
 export default function Navbar() {
-  const { connection, connect, disconnect, player } = useArena();
+  const { connection, connect, disconnect, player, connectionStep } = useArena();
   const location = useLocation();
 
   const isActive = (path: string) => location.pathname === path;
@@ -81,12 +82,21 @@ export default function Navbar() {
             <button
               onClick={connect}
               disabled={connection.status === ConnectionStatus.Connecting}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl btn-glow text-white font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl btn-glow text-white font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed max-w-[280px]"
             >
-              <Wallet className="w-4 h-4" />
-              {connection.status === ConnectionStatus.Connecting
-                ? 'Connecting...'
-                : 'Connect Wallet'}
+              {connection.status === ConnectionStatus.Connecting ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="truncate text-xs">
+                    {connectionStep || 'Connecting...'}
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Wallet className="w-4 h-4" />
+                  Connect Wallet
+                </>
+              )}
             </button>
           )}
         </div>
