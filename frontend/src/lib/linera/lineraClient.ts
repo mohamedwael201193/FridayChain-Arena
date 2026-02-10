@@ -2,8 +2,13 @@
 //
 // Manages the connection between the browser and the Linera network.
 // Uses @linera/client WASM module for trustless, fully client-side chain interaction.
-// Persists the PrivateKey signer in localStorage keyed by MetaMask address
-// so the same on-chain identity survives page reloads.
+// Architecture mirrors SignalSiege's proven AutoSigner + wasmInit pattern.
+//
+// Key design:
+// - WASM module initialized once via ensureWasmInit()
+// - AutoSigner: local PrivateKey in localStorage (no MetaMask per-tx popups)
+// - wallet.setOwner() before Client creation (optimizes bytecode download)
+// - Single timeout on Client creation (no retry loops)
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let lineraModule: any = null;
@@ -14,10 +19,11 @@ let lineraChain: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let lineraApp: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-let hubApp: any = null; // Application handle for Hub chain queries
+let hubApp: any = null;
 let userChainId: string | null = null;
 let signerAddress: string | null = null;
-let isInitialized = false;
+let wasmInitialized = false;
+let wasmInitPromise: Promise<void> | null = null;
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -26,14 +32,51 @@ const FAUCET_URL =
 const APP_ID = import.meta.env.VITE_APP_ID || '';
 const HUB_CHAIN_ID = import.meta.env.VITE_HUB_CHAIN_ID || '';
 
-// ── Timeout Helper ───────────────────────────────────────────────────────
+// ── WASM Initialization (separated like SignalSiege) ─────────────────────
 
 /**
- * Race a promise against a timeout. If the timeout fires first, reject with message.
+ * Ensure WASM module is initialized exactly once.
+ * Calling initialize() before importing classes is critical for Vercel.
  */
-function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+async function ensureWasmInit(): Promise<void> {
+  if (wasmInitialized) return;
+  if (wasmInitPromise) return wasmInitPromise;
+
+  wasmInitPromise = (async () => {
+    console.log('[WASM] Initializing @linera/client...');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const linera: any = await import('@linera/client');
+    if ('initialize' in linera && typeof linera.initialize === 'function') {
+      console.log('[WASM] Calling initialize()...');
+      await linera.initialize();
+      console.log('[WASM] initialize() complete');
+    }
+    lineraModule = linera;
+    wasmInitialized = true;
+    console.log('[WASM] Initialization complete');
+  })();
+
+  await wasmInitPromise;
+}
+
+/**
+ * Get the Linera module (ensuring WASM is loaded first).
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function getLineraClient(): Promise<any> {
+  if (lineraModule) return lineraModule;
+  await ensureWasmInit();
+  return lineraModule;
+}
+
+// ── Timeout Helper ───────────────────────────────────────────────────────
+
+function withTimeout<T>(promise: Promise<T>, ms: number, operationName: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(message)), ms);
+    const timer = setTimeout(
+      () => reject(new Error(`${operationName} timed out after ${ms / 1000}s`)),
+      ms,
+    );
     promise.then(
       (v) => { clearTimeout(timer); resolve(v); },
       (e) => { clearTimeout(timer); reject(e); },
@@ -41,74 +84,7 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
-/**
- * Create the Linera Client with retry logic and elapsed time reporting.
- * The `new Client(wallet, signer)` call downloads bytecodes from Conway validators.
- * This can take 30-120s and may hang if validators are slow. We retry on timeout.
- */
-async function createClientWithRetry(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mod: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  wallet: any,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  signer: any,
-  maxAttempts = 3,
-  timeoutMs = 90_000,
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-): Promise<any> {
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const startTime = Date.now();
-
-    // Show elapsed time every 10 seconds so user knows it's alive
-    const progressInterval = setInterval(() => {
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      reportProgress(`Syncing with validators... ${elapsed}s (attempt ${attempt}/${maxAttempts})`);
-    }, 10_000);
-
-    try {
-      reportProgress(
-        attempt === 1
-          ? 'Syncing with blockchain validators (this may take 1-2 min)...'
-          : `Retrying validator sync (attempt ${attempt}/${maxAttempts})...`,
-      );
-
-      const client = await withTimeout(
-        new mod.Client(wallet, signer),
-        timeoutMs,
-        `Validator sync timed out after ${timeoutMs / 1000}s`,
-      );
-
-      clearInterval(progressInterval);
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      console.log(`[Linera] Client created in ${elapsed}s`);
-      return client;
-    } catch (err) {
-      clearInterval(progressInterval);
-      const elapsed = Math.round((Date.now() - startTime) / 1000);
-      console.warn(`[Linera] Client creation attempt ${attempt} failed after ${elapsed}s:`, err);
-
-      if (attempt === maxAttempts) {
-        throw new Error(
-          `Failed to connect to Conway validators after ${maxAttempts} attempts. ` +
-          'The testnet may be under heavy load — please try again in a few minutes.',
-        );
-      }
-
-      // Brief pause before retry
-      reportProgress(`Retrying in 3 seconds...`);
-      await new Promise((r) => setTimeout(r, 3000));
-
-      // Create fresh wallet+chain for retry (old chain may be stuck)
-      reportProgress('Creating fresh wallet for retry...');
-      wallet = await mod.Faucet.prototype.createWallet
-        ? await new mod.Faucet(FAUCET_URL).createWallet()
-        : wallet;
-    }
-  }
-}
-
-// ── Session Persistence ──────────────────────────────────────────────────
+// ── Session Persistence (AutoSigner pattern) ──────────────────────────────
 
 const SESSION_STORAGE_KEY = 'fridaychain_arena_session';
 
@@ -131,7 +107,7 @@ interface StoredSession {
   evmAddress: string;
   discordUsername?: string;
   registeredAt?: string;
-  appId?: string; // Track which App ID this session belongs to
+  appId?: string;
 }
 
 function getStoredSession(evmAddress: string): StoredSession | null {
@@ -139,12 +115,10 @@ function getStoredSession(evmAddress: string): StoredSession | null {
     const raw = localStorage.getItem(SESSION_STORAGE_KEY + '_' + evmAddress.toLowerCase());
     if (!raw) return null;
     const session: StoredSession = JSON.parse(raw);
-    // If App ID changed (new deployment), keep the private key and username
-    // but clear the registration status so auto-re-register kicks in
     if (session.appId && session.appId !== APP_ID) {
       console.log('[Linera] App ID changed — keeping signer key, clearing registration for', evmAddress);
       session.appId = APP_ID;
-      session.registeredAt = undefined; // Force re-register on new contract
+      session.registeredAt = undefined;
       storeSession(session);
     }
     return session;
@@ -189,83 +163,81 @@ export function getPersistedPlayer(evmAddress: string): { discordUsername: strin
 // ── Initialization ───────────────────────────────────────────────────────
 
 /**
- * Initialize the Linera WASM module. Must be called once before any other
- * operations. Safe to call multiple times — subsequent calls are no-ops.
+ * Initialize the Linera WASM module. Safe to call multiple times.
  */
 export async function initLinera(): Promise<void> {
-  if (isInitialized) return;
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const linera: any = await import('@linera/client');
-    if (linera.initialize && typeof linera.initialize === 'function') {
-      await linera.initialize();
-    }
-    lineraModule = linera;
-    isInitialized = true;
-    console.log('[Linera] WASM module initialized');
-  } catch (err) {
-    console.error('[Linera] Failed to initialize WASM module:', err);
-    throw err;
-  }
+  await ensureWasmInit();
 }
 
 /**
- * Connect to the Linera network with session persistence:
- * - Persists PrivateKey in localStorage keyed by MetaMask address
- * - Same MetaMask account = same signer address across reloads
- * - New chain is claimed each reload (unavoidable without wallet serialization)
- * - Auto-re-registers silently if previously registered
- *
- * Flow: Faucet → Wallet → PrivateKey (restored or new) → claimChain → Client → Chain → App
+ * Connect to the Linera network using AutoSigner pattern:
+ * 1. WASM init (if not already done)
+ * 2. Faucet → Wallet
+ * 3. Create/restore PrivateKey AutoSigner
+ * 4. Claim chain
+ * 5. wallet.setOwner(chainId, signerAddress) — CRITICAL for bytecode download
+ * 6. Create Client (downloads application bytecodes)
+ * 7. Get Chain + App handles
+ * 8. Connect Hub chain
  */
 export async function connectToLinera(evmAddress: string): Promise<{ chainId: string; signerAddress: string }> {
-  if (!isInitialized) {
-    await initLinera();
-  }
+  // Step 1: Ensure WASM is ready
+  reportProgress('Initializing WASM module...');
+  const mod = await getLineraClient();
 
   try {
-    // 1. Create faucet (sync constructor)
+    // Step 2: Connect to faucet
     reportProgress('Connecting to Linera faucet...');
-    const faucet = new lineraModule.Faucet(FAUCET_URL);
+    const faucet = new mod.Faucet(FAUCET_URL);
+    console.log('[Linera] Faucet connected');
 
-    // 2. Create wallet from faucet (fetches genesis config)
+    // Step 3: Create wallet from faucet
     reportProgress('Creating wallet...');
     const wallet = await faucet.createWallet();
     console.log('[Linera] Wallet created');
 
-    // 3. Create or restore PrivateKey signer
+    // Step 4: Create or restore AutoSigner (PrivateKey)
     const stored = getStoredSession(evmAddress);
     let signer;
     let privateKeyHex: string;
 
     if (stored?.privateKeyHex) {
-      // RESTORE: Same signer address as before
       reportProgress('Restoring your identity...');
-      signer = new lineraModule.signer.PrivateKey(stored.privateKeyHex);
+      signer = new mod.signer.PrivateKey(stored.privateKeyHex);
       privateKeyHex = stored.privateKeyHex;
       console.log('[Linera] Restored signer address:', signer.address());
     } else {
-      // FIRST TIME: Generate random key and derive hex for storage
       reportProgress('Creating new blockchain identity...');
-      // Generate 32 random bytes as a private key hex
-      const keyBytes = new Uint8Array(32);
-      crypto.getRandomValues(keyBytes);
-      privateKeyHex = '0x' + Array.from(keyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-      signer = new lineraModule.signer.PrivateKey(privateKeyHex);
+      // Use SDK's native createRandom() for proper key generation
+      signer = mod.signer.PrivateKey.createRandom();
+      privateKeyHex = signer.toString();
       console.log('[Linera] New signer address:', signer.address());
     }
 
     const owner = signer.address();
     signerAddress = owner.toString();
 
-    // 4. Claim a microchain from the faucet
+    // Step 5: Claim a microchain
     reportProgress('Claiming your microchain...');
-    const chainId = await faucet.claimChain(wallet, owner);
+    const chainId = await withTimeout(
+      faucet.claimChain(wallet, owner),
+      30_000,
+      'Chain claiming',
+    ) as string;
     userChainId = chainId.toString();
     console.log('[Linera] Chain claimed:', userChainId);
 
-    // 5. Persist session to localStorage (includes App ID for staleness detection)
+    // Step 6: Register AutoSigner in wallet (CRITICAL — from SignalSiege)
+    // This tells the wallet which chain this signer owns, optimizing bytecode download
+    reportProgress('Registering signer in wallet...');
+    if (typeof wallet.setOwner === 'function') {
+      await wallet.setOwner(userChainId, signerAddress);
+      console.log('[Linera] Auto-signer registered in wallet');
+    } else {
+      console.log('[Linera] wallet.setOwner not available, skipping');
+    }
+
+    // Step 7: Persist session
     storeSession({
       privateKeyHex,
       signerAddress: signerAddress!,
@@ -275,37 +247,102 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
       appId: APP_ID,
     });
 
-    // 6. Create client connected to the network
-    // This step downloads application bytecodes from validators — can take 30-120s
-    lineraClient = await createClientWithRetry(lineraModule, wallet, signer);
-    console.log('[Linera] Client created');
+    // Step 8: Create Linera Client (downloads bytecodes from validators)
+    reportProgress('Syncing with blockchain validators (this may take up to 45s)...');
+    const startTime = Date.now();
 
-    // 7. Get the Chain handle
+    // Show elapsed time every 10 seconds
+    const progressInterval = setInterval(() => {
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      reportProgress(`Syncing with validators... ${elapsed}s`);
+    }, 10_000);
+
+    try {
+      // Create client — pass raw signer for auto-signing
+      const createClientPromise = (async () => {
+        let newClient = new mod.Client(wallet, signer);
+        if (newClient instanceof Promise) {
+          newClient = await newClient;
+        }
+        return newClient;
+      })();
+
+      lineraClient = await withTimeout(createClientPromise, 45_000, 'Client creation');
+      clearInterval(progressInterval);
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      console.log(`[Linera] Client created in ${elapsed}s`);
+    } catch (timeoutError) {
+      clearInterval(progressInterval);
+      console.error('[Linera] Client creation timeout:', timeoutError);
+      throw new Error(
+        'Connection to Linera testnet timed out. The validators may be experiencing high load. Please refresh and try again.',
+      );
+    }
+
+    // Step 9: Sync chain (non-fatal if it fails with some validators)
     reportProgress('Connecting to your chain...');
-    lineraChain = await withTimeout(
-      lineraClient.chain(userChainId),
-      60_000,
-      'Failed to get chain handle — validators may be slow.',
-    );
-    console.log('[Linera] Chain handle obtained');
+    try {
+      if (typeof lineraClient.chain === 'function') {
+        lineraChain = await withTimeout(
+          lineraClient.chain(userChainId),
+          60_000,
+          'Chain sync',
+        );
+        console.log('[Linera] Chain synced');
+      } else if (typeof lineraClient.getChain === 'function') {
+        lineraChain = await withTimeout(
+          lineraClient.getChain(userChainId),
+          60_000,
+          'Chain sync',
+        );
+        console.log('[Linera] Chain synced (getChain)');
+      }
+    } catch (syncError) {
+      console.warn('[Linera] Chain sync warning (non-fatal):', syncError);
+    }
 
-    // 8. Get the Application handle for queries/mutations on player's chain
-    if (APP_ID) {
+    // Step 10: Get Application handle
+    if (APP_ID && lineraChain) {
       reportProgress('Loading application...');
       lineraApp = await withTimeout(
         lineraChain.application(APP_ID),
         60_000,
-        'Failed to get application handle — try refreshing the page.',
+        'Application handle',
       );
       console.log('[Linera] Application handle obtained');
     }
 
-    // 9. Connect to Hub chain LAZILY (non-blocking)
-    //    Hub chain has all tournament data — it's heavier to sync.
-    //    Don't block the user connection for this; load it in background.
-    //    queryHub() will wait for this if needed, or fall back to player chain.
-    if (APP_ID && HUB_CHAIN_ID) {
-      connectHubAsync(); // fire-and-forget
+    // Step 11: Connect to Hub chain (synchronous — no fallback)
+    if (APP_ID && HUB_CHAIN_ID && lineraClient) {
+      reportProgress('Connecting to tournament hub...');
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let hubChain: any;
+        if (typeof lineraClient.chain === 'function') {
+          hubChain = await withTimeout(
+            lineraClient.chain(HUB_CHAIN_ID),
+            60_000,
+            'Hub chain sync',
+          );
+        } else if (typeof lineraClient.getChain === 'function') {
+          hubChain = await withTimeout(
+            lineraClient.getChain(HUB_CHAIN_ID),
+            60_000,
+            'Hub chain sync',
+          );
+        }
+        if (hubChain) {
+          hubApp = await withTimeout(
+            hubChain.application(APP_ID),
+            60_000,
+            'Hub application handle',
+          );
+          console.log('[Linera] Hub application handle obtained');
+        }
+      } catch (hubErr) {
+        console.warn('[Linera] Hub connection warning (non-fatal):', hubErr);
+        // Hub fails gracefully — queries will fall through to player chain
+      }
     }
 
     console.log('[Linera] Connected successfully. Chain ID:', userChainId, 'Signer:', signerAddress);
@@ -314,38 +351,6 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
     console.error('[Linera] Failed to connect:', err);
     throw err;
   }
-}
-
-// ── Hub Chain Lazy Connection ────────────────────────────────────────────
-
-let hubConnectPromise: Promise<void> | null = null;
-
-/**
- * Connect to the Hub chain in the background.
- * Called after initial connection — doesn't block the user.
- */
-function connectHubAsync(): void {
-  if (hubConnectPromise) return; // already in progress
-  hubConnectPromise = (async () => {
-    try {
-      console.log('[Linera] Background: Connecting to tournament hub...');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const hubChain: any = await withTimeout(
-        lineraClient.chain(HUB_CHAIN_ID),
-        120_000,
-        'Hub chain sync timed out',
-      );
-      hubApp = await withTimeout(
-        hubChain.application(APP_ID),
-        60_000,
-        'Hub app handle timed out',
-      );
-      console.log('[Linera] Background: Hub application handle obtained');
-    } catch (err) {
-      console.warn('[Linera] Background: Failed to get Hub app handle (will use player chain):', err);
-      hubConnectPromise = null; // allow retry
-    }
-  })();
 }
 
 // ── Queries & Mutations ──────────────────────────────────────────────────
@@ -409,22 +414,10 @@ export async function mutate(graphqlMutation: string, variables?: Record<string,
 
 /**
  * Execute a GraphQL query against the Hub chain's application.
- * Tournament data, leaderboard, and puzzle boards live on the Hub chain,
- * not on the player's chain.
- *
- * If the hub connection is still loading in the background, wait up to 30s
- * for it. Falls back to the player's chain app handle if hub is unavailable.
+ * Tournament data, leaderboard, and puzzle boards live on the Hub chain.
+ * Falls back to player's chain app handle if hub is unavailable.
  */
 export async function queryHub(graphqlQuery: string, variables?: Record<string, unknown>): Promise<unknown> {
-  // Wait for lazy hub connection if in progress (with timeout)
-  if (!hubApp && hubConnectPromise) {
-    try {
-      await withTimeout(hubConnectPromise, 30_000, 'Hub still syncing');
-    } catch {
-      // Hub not ready yet — fall through to player chain
-    }
-  }
-
   const appHandle = hubApp || lineraApp;
   if (!appHandle) {
     throw new Error('Linera client not connected. Call connectToLinera() first.');

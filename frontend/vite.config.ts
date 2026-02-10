@@ -5,25 +5,23 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 3000,
+    // Required for WASM Cross-Origin Isolation
     headers: {
-      // Required for WASM SharedArrayBuffer support (Linera client)
-      'Cross-Origin-Embedder-Policy': 'credentialless',
       'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
       'Cross-Origin-Resource-Policy': 'cross-origin',
     },
   },
   preview: {
     headers: {
-      'Cross-Origin-Embedder-Policy': 'credentialless',
       'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
       'Cross-Origin-Resource-Policy': 'cross-origin',
     },
   },
   optimizeDeps: {
+    // Don't pre-bundle WASM modules
     exclude: ['@linera/client'],
-    esbuildOptions: {
-      target: 'esnext',
-    },
   },
   esbuild: {
     supported: {
@@ -32,11 +30,14 @@ export default defineConfig({
   },
   build: {
     target: 'esnext',
-    commonjsOptions: {
-      transformMixedEsModules: true,
+    // Don't inline any assets — critical for WASM files
+    assetsInlineLimit: 0,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+        },
+      },
     },
-  },
-  ssr: {
-    noExternal: ['@linera/client'],
   },
 });
