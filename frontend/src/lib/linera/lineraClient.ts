@@ -238,25 +238,12 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
       console.log('[Linera] Application handle obtained');
     }
 
-    // 9. Get the Hub chain's application handle for tournament/leaderboard queries
+    // 9. Connect to Hub chain LAZILY (non-blocking)
+    //    Hub chain has all tournament data — it's heavier to sync.
+    //    Don't block the user connection for this; load it in background.
+    //    queryHub() will wait for this if needed, or fall back to player chain.
     if (APP_ID && HUB_CHAIN_ID) {
-      try {
-        reportProgress('Connecting to tournament hub...');
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const hubChain: any = await withTimeout(
-          lineraClient.chain(HUB_CHAIN_ID),
-          60_000,
-          'Hub chain sync timed out',
-        );
-        hubApp = await withTimeout(
-          hubChain.application(APP_ID),
-          60_000,
-          'Hub app handle timed out',
-        );
-        console.log('[Linera] Hub application handle obtained');
-      } catch (err) {
-        console.warn('[Linera] Failed to get Hub app handle (will fall back to player chain):', err);
-      }
+      connectHubAsync(); // fire-and-forget
     }
 
     console.log('[Linera] Connected successfully. Chain ID:', userChainId, 'Signer:', signerAddress);
@@ -265,6 +252,38 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
     console.error('[Linera] Failed to connect:', err);
     throw err;
   }
+}
+
+// ── Hub Chain Lazy Connection ────────────────────────────────────────────
+
+let hubConnectPromise: Promise<void> | null = null;
+
+/**
+ * Connect to the Hub chain in the background.
+ * Called after initial connection — doesn't block the user.
+ */
+function connectHubAsync(): void {
+  if (hubConnectPromise) return; // already in progress
+  hubConnectPromise = (async () => {
+    try {
+      console.log('[Linera] Background: Connecting to tournament hub...');
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const hubChain: any = await withTimeout(
+        lineraClient.chain(HUB_CHAIN_ID),
+        120_000,
+        'Hub chain sync timed out',
+      );
+      hubApp = await withTimeout(
+        hubChain.application(APP_ID),
+        60_000,
+        'Hub app handle timed out',
+      );
+      console.log('[Linera] Background: Hub application handle obtained');
+    } catch (err) {
+      console.warn('[Linera] Background: Failed to get Hub app handle (will use player chain):', err);
+      hubConnectPromise = null; // allow retry
+    }
+  })();
 }
 
 // ── Queries & Mutations ──────────────────────────────────────────────────
@@ -330,8 +349,20 @@ export async function mutate(graphqlMutation: string, variables?: Record<string,
  * Execute a GraphQL query against the Hub chain's application.
  * Tournament data, leaderboard, and puzzle boards live on the Hub chain,
  * not on the player's chain.
+ *
+ * If the hub connection is still loading in the background, wait up to 30s
+ * for it. Falls back to the player's chain app handle if hub is unavailable.
  */
 export async function queryHub(graphqlQuery: string, variables?: Record<string, unknown>): Promise<unknown> {
+  // Wait for lazy hub connection if in progress (with timeout)
+  if (!hubApp && hubConnectPromise) {
+    try {
+      await withTimeout(hubConnectPromise, 30_000, 'Hub still syncing');
+    } catch {
+      // Hub not ready yet — fall through to player chain
+    }
+  }
+
   const appHandle = hubApp || lineraApp;
   if (!appHandle) {
     throw new Error('Linera client not connected. Call connectToLinera() first.');
