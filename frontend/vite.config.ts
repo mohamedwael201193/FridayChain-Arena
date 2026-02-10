@@ -23,6 +23,10 @@ export default defineConfig({
     // Don't pre-bundle WASM modules
     exclude: ['@linera/client'],
   },
+  // Worker configuration — critical for @linera/client WASM threading
+  worker: {
+    format: 'es',
+  },
   esbuild: {
     supported: {
       'top-level-await': true,
