@@ -41,6 +41,73 @@ function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promi
   });
 }
 
+/**
+ * Create the Linera Client with retry logic and elapsed time reporting.
+ * The `new Client(wallet, signer)` call downloads bytecodes from Conway validators.
+ * This can take 30-120s and may hang if validators are slow. We retry on timeout.
+ */
+async function createClientWithRetry(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mod: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  wallet: any,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  signer: any,
+  maxAttempts = 3,
+  timeoutMs = 90_000,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+): Promise<any> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const startTime = Date.now();
+
+    // Show elapsed time every 10 seconds so user knows it's alive
+    const progressInterval = setInterval(() => {
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      reportProgress(`Syncing with validators... ${elapsed}s (attempt ${attempt}/${maxAttempts})`);
+    }, 10_000);
+
+    try {
+      reportProgress(
+        attempt === 1
+          ? 'Syncing with blockchain validators (this may take 1-2 min)...'
+          : `Retrying validator sync (attempt ${attempt}/${maxAttempts})...`,
+      );
+
+      const client = await withTimeout(
+        new mod.Client(wallet, signer),
+        timeoutMs,
+        `Validator sync timed out after ${timeoutMs / 1000}s`,
+      );
+
+      clearInterval(progressInterval);
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      console.log(`[Linera] Client created in ${elapsed}s`);
+      return client;
+    } catch (err) {
+      clearInterval(progressInterval);
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      console.warn(`[Linera] Client creation attempt ${attempt} failed after ${elapsed}s:`, err);
+
+      if (attempt === maxAttempts) {
+        throw new Error(
+          `Failed to connect to Conway validators after ${maxAttempts} attempts. ` +
+          'The testnet may be under heavy load — please try again in a few minutes.',
+        );
+      }
+
+      // Brief pause before retry
+      reportProgress(`Retrying in 3 seconds...`);
+      await new Promise((r) => setTimeout(r, 3000));
+
+      // Create fresh wallet+chain for retry (old chain may be stuck)
+      reportProgress('Creating fresh wallet for retry...');
+      wallet = await mod.Faucet.prototype.createWallet
+        ? await new mod.Faucet(FAUCET_URL).createWallet()
+        : wallet;
+    }
+  }
+}
+
 // ── Session Persistence ──────────────────────────────────────────────────
 
 const SESSION_STORAGE_KEY = 'fridaychain_arena_session';
@@ -209,13 +276,8 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
     });
 
     // 6. Create client connected to the network
-    // This step downloads application bytecodes from validators — can take 30-90s
-    reportProgress('Syncing with blockchain validators (this may take a minute)...');
-    lineraClient = await withTimeout(
-      new lineraModule.Client(wallet, signer),
-      120_000,
-      'Client creation timed out — Conway testnet validators may be slow. Please try again.',
-    );
+    // This step downloads application bytecodes from validators — can take 30-120s
+    lineraClient = await createClientWithRetry(lineraModule, wallet, signer);
     console.log('[Linera] Client created');
 
     // 7. Get the Chain handle
