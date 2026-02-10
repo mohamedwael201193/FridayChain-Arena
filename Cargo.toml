@@ -1,0 +1,11 @@
+[workspace]
+members = [
+    "contracts/fridaychain-arena",
+]
+resolver = "2"
+
+[workspace.dependencies]
+linera-sdk = "0.15.8"
+async-graphql = "=7.0.17"
+async-graphql-value = "=7.0.17"
+serde = { version = "1.0", features = ["derive"] }

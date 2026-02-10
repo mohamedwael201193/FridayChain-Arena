@@ -1,0 +1,25 @@
+[package]
+name = "fridaychain-arena"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "fridaychain_arena_contract"
+path = "src/contract.rs"
+
+[[bin]]
+name = "fridaychain_arena_service"
+path = "src/service.rs"
+
+[dependencies]
+linera-sdk = { workspace = true }
+async-graphql = { workspace = true }
+async-graphql-value = { workspace = true }
+serde = { workspace = true }
+rand = { version = "0.8", default-features = false }
+rand_chacha = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+linera-sdk = { workspace = true, features = ["test"] }
+tokio = { version = "1", features = ["rt", "macros"] }

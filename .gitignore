@@ -1,0 +1,30 @@
+# Rust build artifacts
+target/
+
+# Node.js
+node_modules/
+frontend/node_modules/
+frontend/dist/
+
+# Environment files (contain secrets/chain IDs)
+.env
+frontend/.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# Linera
+*.wasm
+wallet.json
+linera-*.json
+
+# Logs
+*.log
+npm-debug.log*
