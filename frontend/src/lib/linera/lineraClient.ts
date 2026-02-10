@@ -44,6 +44,16 @@ async function ensureWasmInit(): Promise<void> {
   if (wasmInitPromise) return wasmInitPromise;
 
   wasmInitPromise = (async () => {
+    // Check cross-origin isolation (required for SharedArrayBuffer / WASM threading)
+    if (typeof self !== 'undefined' && !self.crossOriginIsolated) {
+      console.warn(
+        '[WASM] ⚠️ Page is NOT cross-origin isolated! SharedArrayBuffer unavailable.',
+        'Ensure COOP/COEP headers are served. Client creation may hang without them.',
+      );
+    } else {
+      console.log('[WASM] ✓ Cross-origin isolated — SharedArrayBuffer available');
+    }
+
     console.log('[WASM] Initializing @linera/client...');
     const linera: any = await import('@linera/client');
     if ('initialize' in linera && typeof linera.initialize === 'function') {
