@@ -3,7 +3,7 @@
 // The main Sudoku gameplay screen.
 // Reads puzzle and game state from chain, sends cell placements as mutations.
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useArena } from '../hooks/useArena';
 import { useTournament } from '../hooks/useTournament';
 import { useLeaderboard } from '../hooks/useLeaderboard';
@@ -51,6 +51,9 @@ export default function GamePlayPage() {
 
   const [registrationName, setRegistrationName] = useState('');
 
+  // Freeze the rating at completion time so it stops ticking down
+  const frozenRating = useRef<number | null>(null);
+
   const [, setTick] = useState(0);
   useEffect(() => {
     const interval = setInterval(() => setTick(t => t + 1), 2000);
@@ -87,6 +90,33 @@ export default function GamePlayPage() {
 
   const estimatedRating = useMemo(() => {
     if (!gameState || !tournament) return null;
+    // Once completed, use the Hub's authoritative score from the leaderboard
+    // so the gameplay page matches the leaderboard exactly.
+    if (gameState.completed) {
+      if (frozenRating.current !== null) return frozenRating.current;
+      // Look up our entry in the Hub leaderboard for the authoritative base score
+      const myWallet = player?.wallet?.toLowerCase();
+      const myEntry = myWallet
+        ? leaderboardEntries.find(e => e.wallet.toLowerCase() === myWallet)
+        : null;
+      if (myEntry) {
+        const hubRating = parseInt(myEntry.score) + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
+        frozenRating.current = hubRating;
+        return hubRating;
+      }
+      // Fallback: compute locally if leaderboard not yet loaded
+      const tournamentStartMicros = parseInt(tournament.startTimeMicros || '0');
+      if (tournamentStartMicros) {
+        const nowMicros = Date.now() * 1000;
+        const endMicros = parseInt(tournament.endTimeMicros || '0');
+        const cappedNowMicros = endMicros > 0 ? Math.min(nowMicros, endMicros) : nowMicros;
+        const elapsedSecs = Math.floor((cappedNowMicros - tournamentStartMicros) / 1_000_000);
+        const baseScore = Math.max(0, 10000 - (elapsedSecs * 2) - ((gameState.penaltyCount || 0) * 100));
+        const rating = baseScore + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
+        frozenRating.current = rating;
+        return rating;
+      }
+    }
     const tournamentStartMicros = parseInt(tournament.startTimeMicros || '0');
     if (!tournamentStartMicros) return null;
     const nowMicros = Date.now() * 1000;
@@ -98,9 +128,9 @@ export default function GamePlayPage() {
     const movePenalty = (gameState.penaltyCount || 0) * 100;
     const baseScore = Math.max(0, 10000 - timePenalty - movePenalty);
     const correctMoves = Math.max(0, (gameState.moveCount || 0) - (gameState.penaltyCount || 0));
-    const progressBonus = gameState.completed ? TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL : correctMoves * PROGRESS_BONUS_PER_CELL;
+    const progressBonus = correctMoves * PROGRESS_BONUS_PER_CELL;
     return baseScore + progressBonus;
-  }, [gameState, tournament, timeRemainingSecs]);
+  }, [gameState, tournament, player, leaderboardEntries, timeRemainingSecs]);
 
   // ── Not connected ──────────────────────────────────────────────────
 
@@ -224,7 +254,7 @@ export default function GamePlayPage() {
             {estimatedRating !== null ? estimatedRating.toLocaleString() : parseInt(gameState.score).toLocaleString()}
           </p>
           <p className="text-[11px] text-arena-text-dim mt-2">
-            Base: {parseInt(gameState.score).toLocaleString()} + Progress: +{(TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL).toLocaleString()}
+            Base: {((estimatedRating ?? 0) - TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL).toLocaleString()} + Progress: +{(TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL).toLocaleString()}
           </p>
           <div className="mt-8 grid grid-cols-3 gap-4">
             <div className="glass-card rounded-xl p-4">
