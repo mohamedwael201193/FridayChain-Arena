@@ -99,10 +99,8 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
 
       // 2. Initialize Linera WASM and connect to Conway testnet
       //    PrivateKey signer is persisted in localStorage keyed by MetaMask address
-      //    Set progress callback so UI shows each step
-      lineraClient.setProgressCallback((step) => setConnectionStep(step));
+      setConnectionStep('Connecting to Linera...');
       const result = await lineraClient.connectToLinera(evmAddress);
-      lineraClient.setProgressCallback(null);
       setConnectionStep(null);
       console.log('[Arena] Linera connected, chain:', result.chainId, 'signer:', result.signerAddress);
 
@@ -143,7 +141,6 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Connection failed';
       console.error('[Arena] Connection failed:', message);
-      lineraClient.setProgressCallback(null);
       setConnectionStep(null);
       setConnection({
         status: ConnectionStatus.Error,
@@ -262,15 +259,58 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
     [connection.signerAddress],
   );
 
+  // ── Game State Backup (localStorage safety net) ───────────────────────
+
+  const GAMESTATE_KEY = 'fridaychain_arena_gamestate';
+
+  const backupGameState = (gs: PlayerGameState) => {
+    const addr = connection.address;
+    if (!addr) return;
+    try {
+      localStorage.setItem(
+        GAMESTATE_KEY + '_' + addr.toLowerCase(),
+        JSON.stringify(gs),
+      );
+    } catch { /* ignore */ }
+  };
+
+  const restoreGameState = (): PlayerGameState | null => {
+    const addr = connection.address;
+    if (!addr) return null;
+    try {
+      const raw = localStorage.getItem(GAMESTATE_KEY + '_' + addr.toLowerCase());
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch { return null; }
+  };
+
   // ── Refresh Functions ────────────────────────────────────────────────
 
   const refreshGameStateInternal = async () => {
     if (!connection.signerAddress) return;
     try {
       const gs = await arenaApi.getPlayerGameState(connection.signerAddress);
-      setGameState(gs);
+      if (gs) {
+        setGameState(gs);
+        backupGameState(gs);
+      } else if (!gameState) {
+        // Chain returned null — try localStorage backup
+        const backup = restoreGameState();
+        if (backup) {
+          console.log('[Arena] Restored game state from localStorage backup');
+          setGameState(backup);
+        }
+      }
     } catch (e) {
       console.warn('Failed to refresh game state:', e);
+      // On error, try localStorage backup as fallback
+      if (!gameState) {
+        const backup = restoreGameState();
+        if (backup) {
+          console.log('[Arena] Restored game state from localStorage backup (fallback)');
+          setGameState(backup);
+        }
+      }
     }
   };
 

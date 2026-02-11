@@ -3,7 +3,7 @@
 // The main Sudoku gameplay screen.
 // Reads puzzle and game state from chain, sends cell placements as mutations.
 
-import { useState, useMemo, useEffect, useRef } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useArena } from '../hooks/useArena';
 import { useTournament } from '../hooks/useTournament';
 import { useLeaderboard } from '../hooks/useLeaderboard';
@@ -51,8 +51,8 @@ export default function GamePlayPage() {
 
   const [registrationName, setRegistrationName] = useState('');
 
-  // Freeze the rating at completion time so it stops ticking down
-  const frozenRating = useRef<number | null>(null);
+  // Frozen rating: once set, never changes. Prevents score from ticking down.
+  const [frozenRating, setFrozenRating] = useState<number | null>(null);
 
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -88,35 +88,26 @@ export default function GamePlayPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [leaderboardEntries, tournament?.startTimeMicros]);
 
+  // When game is completed, freeze the rating from the Hub leaderboard.
+  // This effect runs once when completion is detected + Hub data is available.
+  useEffect(() => {
+    if (!gameState?.completed || frozenRating !== null) return;
+    // Match by on-chain signer address (what the Hub leaderboard stores)
+    const mySigner = connection.signerAddress?.toLowerCase();
+    const myEntry = mySigner
+      ? leaderboardEntries.find(e => e.wallet.toLowerCase() === mySigner)
+      : null;
+    if (myEntry) {
+      const hubRating = parseInt(myEntry.score) + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
+      setFrozenRating(hubRating);
+    }
+  }, [gameState?.completed, connection.signerAddress, leaderboardEntries, frozenRating]);
+
+  // Live estimated rating — only computed while game is in progress
   const estimatedRating = useMemo(() => {
     if (!gameState || !tournament) return null;
-    // Once completed, use the Hub's authoritative score from the leaderboard
-    // so the gameplay page matches the leaderboard exactly.
-    if (gameState.completed) {
-      if (frozenRating.current !== null) return frozenRating.current;
-      // Look up our entry in the Hub leaderboard for the authoritative base score
-      const myWallet = player?.wallet?.toLowerCase();
-      const myEntry = myWallet
-        ? leaderboardEntries.find(e => e.wallet.toLowerCase() === myWallet)
-        : null;
-      if (myEntry) {
-        const hubRating = parseInt(myEntry.score) + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
-        frozenRating.current = hubRating;
-        return hubRating;
-      }
-      // Fallback: compute locally if leaderboard not yet loaded
-      const tournamentStartMicros = parseInt(tournament.startTimeMicros || '0');
-      if (tournamentStartMicros) {
-        const nowMicros = Date.now() * 1000;
-        const endMicros = parseInt(tournament.endTimeMicros || '0');
-        const cappedNowMicros = endMicros > 0 ? Math.min(nowMicros, endMicros) : nowMicros;
-        const elapsedSecs = Math.floor((cappedNowMicros - tournamentStartMicros) / 1_000_000);
-        const baseScore = Math.max(0, 10000 - (elapsedSecs * 2) - ((gameState.penaltyCount || 0) * 100));
-        const rating = baseScore + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
-        frozenRating.current = rating;
-        return rating;
-      }
-    }
+    // Once completed, return the frozen Hub rating (or null until Hub loads)
+    if (gameState.completed) return frozenRating;
     const tournamentStartMicros = parseInt(tournament.startTimeMicros || '0');
     if (!tournamentStartMicros) return null;
     const nowMicros = Date.now() * 1000;
@@ -130,7 +121,7 @@ export default function GamePlayPage() {
     const correctMoves = Math.max(0, (gameState.moveCount || 0) - (gameState.penaltyCount || 0));
     const progressBonus = correctMoves * PROGRESS_BONUS_PER_CELL;
     return baseScore + progressBonus;
-  }, [gameState, tournament, player, leaderboardEntries, timeRemainingSecs]);
+  }, [gameState, tournament, frozenRating, timeRemainingSecs]);
 
   // ── Not connected ──────────────────────────────────────────────────
 

@@ -1,7 +1,8 @@
 // FridayChain Arena — Profile Page
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useArena } from '../hooks/useArena';
+import { useLeaderboard } from '../hooks/useLeaderboard';
 import { ConnectionStatus } from '../lib/arena/types';
 import {
   Wallet,
@@ -35,8 +36,23 @@ export default function ProfilePage() {
     clearError,
   } = useArena();
 
+  const { entries: leaderboardEntries } = useLeaderboard(10);
   const [editing, setEditing] = useState(false);
   const [newUsername, setNewUsername] = useState('');
+
+  // Compute Arena Rating from Hub leaderboard (authoritative) for profile display
+  const TOTAL_CELLS_TO_PLACE = 46;
+  const PROGRESS_BONUS_PER_CELL = 150;
+  const arenaRating = useMemo(() => {
+    if (!gameState?.completed || !connection.signerAddress) return null;
+    // Match by on-chain signer address (what the Hub leaderboard stores)
+    const mySigner = connection.signerAddress.toLowerCase();
+    const myEntry = leaderboardEntries.find(e => e.wallet.toLowerCase() === mySigner);
+    if (myEntry) {
+      return parseInt(myEntry.score) + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
+    }
+    return null;
+  }, [gameState, connection.signerAddress, leaderboardEntries]);
 
   // ── Not connected ──────────────────────────────────────────────────
 
@@ -214,11 +230,11 @@ export default function ProfilePage() {
                 gameState.completed ? 'text-arena-success' : 'text-arena-warning'
               }
             />
-            {gameState.completed && (
+            {gameState.completed && arenaRating !== null && (
               <InfoRow
                 icon={<Trophy className="w-3.5 h-3.5" />}
-                label="Score"
-                value={parseInt(gameState.score).toLocaleString()}
+                label="Arena Rating"
+                value={arenaRating.toLocaleString()}
                 valueColor="text-arena-accent"
               />
             )}
