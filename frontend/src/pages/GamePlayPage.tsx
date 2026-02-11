@@ -74,7 +74,8 @@ export default function GamePlayPage() {
 
   const computeArenaRating = (entry: typeof leaderboardEntries[0]) => {
     const baseScore = computeLiveBaseScore(entry);
-    if (entry.completed) return baseScore;
+    // Completed players get the full 46-cell progress bonus (they solved every cell)
+    if (entry.completed) return baseScore + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
     const correctMoves = Math.max(0, entry.moveCount - (entry.penaltyCount || 0));
     return baseScore + (correctMoves * PROGRESS_BONUS_PER_CELL);
   };
@@ -97,7 +98,7 @@ export default function GamePlayPage() {
     const movePenalty = (gameState.penaltyCount || 0) * 100;
     const baseScore = Math.max(0, 10000 - timePenalty - movePenalty);
     const correctMoves = Math.max(0, (gameState.moveCount || 0) - (gameState.penaltyCount || 0));
-    const progressBonus = gameState.completed ? 0 : correctMoves * PROGRESS_BONUS_PER_CELL;
+    const progressBonus = gameState.completed ? TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL : correctMoves * PROGRESS_BONUS_PER_CELL;
     return baseScore + progressBonus;
   }, [gameState, tournament, timeRemainingSecs]);
 
@@ -217,10 +218,13 @@ export default function GamePlayPage() {
         <div className="glass-card rounded-2xl p-8 mb-8 glow-outline text-center">
           <p className="text-sm text-arena-text-muted mb-3 flex items-center justify-center gap-1.5">
             <Trophy className="w-4 h-4 text-arena-accent" />
-            Your Final Score
+            Your Arena Rating
           </p>
           <p className="text-6xl font-extrabold text-arena-accent font-mono animate-scale-in">
-            {parseInt(gameState.score).toLocaleString()}
+            {estimatedRating !== null ? estimatedRating.toLocaleString() : parseInt(gameState.score).toLocaleString()}
+          </p>
+          <p className="text-[11px] text-arena-text-dim mt-2">
+            Base: {parseInt(gameState.score).toLocaleString()} + Progress: +{(TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL).toLocaleString()}
           </p>
           <div className="mt-8 grid grid-cols-3 gap-4">
             <div className="glass-card rounded-xl p-4">

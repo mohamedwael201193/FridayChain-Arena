@@ -328,7 +328,7 @@ impl FridayChainArenaContract {
         if board_complete {
             game_state.completed = true;
             game_state.completion_time_micros = Some(now);
-            game_state.score = game_state.calculate_score(game_state.start_time_micros, now);
+            game_state.score = game_state.calculate_score(tournament.start_time_micros, now);
 
             self.send_to_hub(Message::SyncBoardComplete {
                 wallet,

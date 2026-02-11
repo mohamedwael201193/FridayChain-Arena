@@ -395,12 +395,13 @@ impl PlayerGameState {
 
     /// Calculate score based on completion time and penalties.
     /// Higher is better. Formula:
-    ///   score = 10000 - (time_seconds * 10) - (penalties * 200)
+    ///   score = 10000 - (time_seconds * 2) - (penalties * 100)
     /// Minimum score is 0.
+    /// NOTE: Must match the Hub's formula in handle_sync_board_complete.
     pub fn calculate_score(&self, start_micros: u64, end_micros: u64) -> u64 {
         let elapsed_secs = (end_micros.saturating_sub(start_micros)) / 1_000_000;
-        let time_penalty = elapsed_secs.saturating_mul(10);
-        let move_penalty = (self.penalty_count as u64).saturating_mul(200);
+        let time_penalty = elapsed_secs.saturating_mul(2);
+        let move_penalty = (self.penalty_count as u64).saturating_mul(100);
         10_000u64
             .saturating_sub(time_penalty)
             .saturating_sub(move_penalty)

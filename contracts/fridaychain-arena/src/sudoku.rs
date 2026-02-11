@@ -130,7 +130,7 @@ pub fn verify_game(seed: u64, moves: &[(u8, u8, u8)]) -> crate::VerifyResult {
     let board_complete = state.check_complete(&board.solution);
     // Assume a hypothetical 1-hour window for scoring during verification
     let score = if board_complete {
-        10_000u64.saturating_sub((penalty_count as u64).saturating_mul(200))
+        10_000u64.saturating_sub((penalty_count as u64).saturating_mul(100))
     } else {
         0
     };

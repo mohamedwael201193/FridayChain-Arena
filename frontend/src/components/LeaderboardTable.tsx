@@ -41,7 +41,8 @@ function computeLiveBaseScore(entry: LeaderboardEntry, tournamentStartMicros: st
 
 function computeArenaRating(entry: LeaderboardEntry, tournamentStartMicros: string, tournamentEndMicros?: string): number {
   const baseScore = computeLiveBaseScore(entry, tournamentStartMicros, tournamentEndMicros);
-  if (entry.completed) return baseScore;
+  // Completed players get the full 46-cell progress bonus (they solved every cell)
+  if (entry.completed) return baseScore + TOTAL_CELLS_TO_PLACE * PROGRESS_BONUS_PER_CELL;
   const correctMoves = Math.max(0, entry.moveCount - (entry.penaltyCount || 0));
   return baseScore + correctMoves * PROGRESS_BONUS_PER_CELL;
 }
@@ -184,10 +185,10 @@ export default function LeaderboardTable({
                     }`}>
                       {displayRating.toLocaleString()}
                     </span>
-                    {!entry.completed && correctMoves > 0 && (
+                    {(entry.completed || correctMoves > 0) && (
                       <div className="flex items-center justify-end gap-0.5 text-[10px] text-arena-success">
                         <TrendingUp className="w-2.5 h-2.5" />
-                        +{(correctMoves * PROGRESS_BONUS_PER_CELL).toLocaleString()}
+                        +{((entry.completed ? TOTAL_CELLS_TO_PLACE : correctMoves) * PROGRESS_BONUS_PER_CELL).toLocaleString()}
                       </div>
                     )}
                   </div>
