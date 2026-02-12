@@ -7,7 +7,6 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { useArena } from '../hooks/useArena';
 import { useTournament } from '../hooks/useTournament';
 import { useLeaderboard } from '../hooks/useLeaderboard';
-import { isEntrySuspicious } from '../hooks/useSuspiciousMoveDetector';
 import SudokuGrid from '../components/SudokuGrid';
 import CountdownTimer from '../components/CountdownTimer';
 import { ConnectionStatus } from '../lib/arena/types';
@@ -469,9 +468,7 @@ export default function GamePlayPage() {
                           <span className="w-3 text-center font-mono text-arena-text-dim">{i + 1}</span>
                         )}
                         {entry.discordUsername}{isYou ? ' (you)' : ''}
-                        {((isYou && isSuspicious) ||
-                          (tournament?.startTimeMicros && entry.moveCount >= 5 &&
-                            isEntrySuspicious(entry.moveCount, tournament.startTimeMicros, entry.completionTimeMicros, tournament.endTimeMicros))) && (
+                        {((isYou && isSuspicious) || entry.isSuspicious) && (
                           <span className="relative flex h-2 w-2 ml-1 flex-shrink-0">
                             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
                             <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />

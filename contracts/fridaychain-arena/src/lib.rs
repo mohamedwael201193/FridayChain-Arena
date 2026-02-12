@@ -419,6 +419,17 @@ pub struct LeaderboardEntry {
     pub penalty_count: u32,
     pub move_count: u32,
     pub completed: bool,
+    /// Timestamp (µs) of the player's first cell placement in this tournament.
+    /// Used with `last_move_time_micros` to measure actual solving pace.
+    #[serde(default)]
+    pub first_move_time_micros: u64,
+    /// Timestamp (µs) of the player's most recent cell placement.
+    #[serde(default)]
+    pub last_move_time_micros: u64,
+    /// Set to `true` by the Hub when the player's average pace is
+    /// suspiciously fast (< 6 s per move measured from first to last move).
+    #[serde(default)]
+    pub is_suspicious: bool,
 }
 
 /// A cached leaderboard response stored on a player's chain.

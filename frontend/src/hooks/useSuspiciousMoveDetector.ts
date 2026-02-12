@@ -93,41 +93,4 @@ export function useSuspiciousMoveDetector(): SuspiciousMoveDetector {
 
 // ── Leaderboard-level detection (static analysis) ────────────────────────
 
-/**
- * Check if a leaderboard entry shows suspicious move pacing.
- * Uses moveCount + elapsed time to compute average seconds per move.
- *
- * @param moveCount       Total moves the player has made
- * @param tournamentStartMicros  Tournament start timestamp (microseconds)
- * @param completionTimeMicros   Player's completion time (microseconds), or null if in-progress
- * @param tournamentEndMicros    Tournament end timestamp (microseconds), optional cap
- * @returns true if the player's move pace is suspiciously fast
- */
-export function isEntrySuspicious(
-  moveCount: number,
-  tournamentStartMicros: string,
-  completionTimeMicros?: string,
-  tournamentEndMicros?: string,
-): boolean {
-  // Need at least 5 moves to have a meaningful sample
-  if (moveCount < 5) return false;
 
-  const startMicros = parseInt(tournamentStartMicros || '0');
-  if (!startMicros) return false;
-
-  // Use completion time if completed, otherwise current time (capped at tournament end)
-  let endMicros: number;
-  if (completionTimeMicros && parseInt(completionTimeMicros) > 0) {
-    endMicros = parseInt(completionTimeMicros);
-  } else {
-    const nowMicros = Date.now() * 1000;
-    const tournEnd = tournamentEndMicros ? parseInt(tournamentEndMicros) : Infinity;
-    endMicros = Math.min(nowMicros, tournEnd);
-  }
-
-  const elapsedSecs = (endMicros - startMicros) / 1_000_000;
-  if (elapsedSecs <= 0) return false;
-
-  const avgSecsPerMove = elapsedSecs / moveCount;
-  return avgSecsPerMove < MIN_AVG_SECS_PER_MOVE;
-}

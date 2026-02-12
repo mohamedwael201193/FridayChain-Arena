@@ -38,6 +38,12 @@ export interface LeaderboardEntry {
   penaltyCount: number;
   moveCount: number;
   completed: boolean;
+  /** Timestamp (µs) of first cell placement — set by Hub contract */
+  firstMoveTimeMicros?: string;
+  /** Timestamp (µs) of most recent cell placement */
+  lastMoveTimeMicros?: string;
+  /** True when the Hub detects suspiciously fast move pacing (< 6 s avg) */
+  isSuspicious?: boolean;
 }
 
 export interface CachedLeaderboard {

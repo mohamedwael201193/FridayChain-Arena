@@ -44,6 +44,7 @@ echo "→ Publishing and creating application..."
 linera publish-and-create \
     "$CONTRACT_WASM" \
     "$SERVICE_WASM" \
+    --json-parameters "{\"hub_chain_id\":\"$HUB_CHAIN_ID\"}" \
     --json-argument "{\"hub_chain_id\":\"$HUB_CHAIN_ID\"}"
 
 echo ""

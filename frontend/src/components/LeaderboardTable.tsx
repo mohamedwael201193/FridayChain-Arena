@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { LeaderboardEntry } from '../lib/arena/types';
-import { isEntrySuspicious } from '../hooks/useSuspiciousMoveDetector';
 import {
   Crown,
   Medal,
@@ -138,10 +137,9 @@ export default function LeaderboardTable({
             const correctMoves = 'correctMoves' in entry ? (entry as any).correctMoves : Math.max(0, entry.moveCount - (entry.penaltyCount || 0));
             const progressPct = entry.completed ? 100 : Math.round((correctMoves / TOTAL_CELLS_TO_PLACE) * 100);
 
-            // Anti-cheat: flag ANY player with suspicious move pacing
-            const entrySuspicious = (isHighlighted && isSuspicious) ||
-              (tournamentStartMicros && entry.moveCount >= 5 &&
-                isEntrySuspicious(entry.moveCount, tournamentStartMicros, entry.completionTimeMicros, tournamentEndMicros));
+            // Anti-cheat: use the on-chain isSuspicious flag (set by Hub)
+            // Also show for self if local burst detection triggered
+            const entrySuspicious = entry.isSuspicious || (isHighlighted && isSuspicious);
 
             return (
               <tr

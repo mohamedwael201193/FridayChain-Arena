@@ -115,6 +115,9 @@ export const QUERY_LEADERBOARD = `
       penaltyCount
       moveCount
       completed
+      firstMoveTimeMicros
+      lastMoveTimeMicros
+      isSuspicious
     }
   }
 `;
@@ -130,6 +133,9 @@ export const QUERY_CACHED_LEADERBOARD = `
         penaltyCount
         moveCount
         completed
+        firstMoveTimeMicros
+        lastMoveTimeMicros
+        isSuspicious
       }
       tournamentId
       isActive

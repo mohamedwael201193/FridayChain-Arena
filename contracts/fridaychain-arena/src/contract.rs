@@ -570,6 +570,9 @@ impl FridayChainArenaContract {
         _row: u8, _col: u8, _value: u8, timestamp_micros: u64,
         penalty_count: u32,
     ) {
+        /// Minimum average seconds per move before a player is flagged.
+        const SUSPICIOUS_PACE_SECS: u64 = 6;
+
         if let Some(mut tournament) = self.state.active_tournament.get().clone() {
             if tournament.active {
                 // Compute estimated live score for in-progress players
@@ -594,6 +597,9 @@ impl FridayChainArenaContract {
                         penalty_count,
                         move_count: 1,
                         completed: false,
+                        first_move_time_micros: timestamp_micros,
+                        last_move_time_micros: timestamp_micros,
+                        is_suspicious: false,
                     };
                     self.state.leaderboard.insert(&wallet, entry)
                         .expect("Failed to create leaderboard entry");
@@ -606,6 +612,20 @@ impl FridayChainArenaContract {
                             entry.move_count += 1;
                             entry.penalty_count = penalty_count;
                             entry.score = estimated_score;
+                            entry.last_move_time_micros = timestamp_micros;
+
+                            // Detect suspicious pace: avg interval between moves
+                            if entry.move_count >= 5 && entry.first_move_time_micros > 0 {
+                                let solve_secs = timestamp_micros
+                                    .saturating_sub(entry.first_move_time_micros) / 1_000_000;
+                                // N moves → N-1 intervals
+                                let intervals = (entry.move_count - 1) as u64;
+                                let avg_pace = if intervals > 0 { solve_secs / intervals } else { u64::MAX };
+                                if avg_pace < SUSPICIOUS_PACE_SECS {
+                                    entry.is_suspicious = true;
+                                }
+                            }
+
                             self.state.leaderboard.insert(&wallet, entry)
                                 .expect("Failed to update leaderboard entry");
                         }
@@ -622,6 +642,9 @@ impl FridayChainArenaContract {
         penalty_count: u32,
         move_count: u32,
     ) {
+        /// Minimum average seconds per move before a player is flagged.
+        const SUSPICIOUS_PACE_SECS: u64 = 6;
+
         let username = self.state.players.get(&wallet).await
             .unwrap_or(None)
             .map(|p| p.discord_username.clone())
@@ -637,6 +660,25 @@ impl FridayChainArenaContract {
         let move_pen = (penalty_count as u64).saturating_mul(100);
         let score = 10_000u64.saturating_sub(time_penalty).saturating_sub(move_pen);
 
+        // Preserve first_move_time_micros and is_suspicious from the
+        // in-progress entry (if one exists). Fall back to tournament start.
+        let existing = self.state.leaderboard.get(&wallet).await.unwrap_or(None);
+        let first_move = existing.as_ref()
+            .map(|e| e.first_move_time_micros)
+            .filter(|&t| t > 0)
+            .unwrap_or(tournament.start_time_micros);
+        let mut suspicious = existing.as_ref().map(|e| e.is_suspicious).unwrap_or(false);
+
+        // Final suspicious check using actual solve time (first move → completion)
+        if move_count >= 5 {
+            let solve_secs = completion_time_micros.saturating_sub(first_move) / 1_000_000;
+            let intervals = (move_count - 1) as u64;
+            let avg_pace = if intervals > 0 { solve_secs / intervals } else { u64::MAX };
+            if avg_pace < SUSPICIOUS_PACE_SECS {
+                suspicious = true;
+            }
+        }
+
         let entry = LeaderboardEntry {
             wallet,
             discord_username: username,
@@ -645,6 +687,9 @@ impl FridayChainArenaContract {
             penalty_count,
             move_count,
             completed: true,
+            first_move_time_micros: first_move,
+            last_move_time_micros: completion_time_micros,
+            is_suspicious: suspicious,
         };
 
         self.state.leaderboard.insert(&wallet, entry.clone())
