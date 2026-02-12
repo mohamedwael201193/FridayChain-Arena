@@ -3,10 +3,11 @@
 // The main Sudoku gameplay screen.
 // Reads puzzle and game state from chain, sends cell placements as mutations.
 
-import { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useArena } from '../hooks/useArena';
 import { useTournament } from '../hooks/useTournament';
 import { useLeaderboard } from '../hooks/useLeaderboard';
+import { isEntrySuspicious } from '../hooks/useSuspiciousMoveDetector';
 import SudokuGrid from '../components/SudokuGrid';
 import CountdownTimer from '../components/CountdownTimer';
 import { ConnectionStatus } from '../lib/arena/types';
@@ -45,6 +46,7 @@ export default function GamePlayPage() {
     loading,
     error,
     clearError,
+    isSuspicious,
   } = useArena();
   const { isActive, timeRemainingFormatted, timeRemainingSecs } = useTournament();
   const { entries: leaderboardEntries } = useLeaderboard(10);
@@ -53,6 +55,16 @@ export default function GamePlayPage() {
 
   // Frozen rating: once set, never changes. Prevents score from ticking down.
   const [frozenRating, setFrozenRating] = useState<number | null>(null);
+
+  // Reset frozen rating when tournament changes (new tournament = fresh start)
+  const tournamentId = tournament?.id;
+  const lastTournamentIdRef = React.useRef(tournamentId);
+  useEffect(() => {
+    if (tournamentId && tournamentId !== lastTournamentIdRef.current) {
+      lastTournamentIdRef.current = tournamentId;
+      setFrozenRating(null);
+    }
+  }, [tournamentId]);
 
   const [, setTick] = useState(0);
   useEffect(() => {
@@ -306,11 +318,17 @@ export default function GamePlayPage() {
             <h1 className="text-2xl font-bold">
               Tournament #{tournament.id}
             </h1>
-            <p className="text-sm text-arena-text-muted">
+            <p className="text-sm text-arena-text-muted flex items-center gap-1.5">
               Playing as{' '}
               <span className="text-arena-primary font-semibold">
                 {player.discordUsername}
               </span>
+              {isSuspicious && (
+                <span className="relative flex h-2.5 w-2.5" title="Rapid move pattern detected">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500" />
+                </span>
+              )}
             </p>
           </div>
         </div>
@@ -451,6 +469,14 @@ export default function GamePlayPage() {
                           <span className="w-3 text-center font-mono text-arena-text-dim">{i + 1}</span>
                         )}
                         {entry.discordUsername}{isYou ? ' (you)' : ''}
+                        {((isYou && isSuspicious) ||
+                          (tournament?.startTimeMicros && entry.moveCount >= 5 &&
+                            isEntrySuspicious(entry.moveCount, tournament.startTimeMicros, entry.completionTimeMicros, tournament.endTimeMicros))) && (
+                          <span className="relative flex h-2 w-2 ml-1 flex-shrink-0">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                          </span>
+                        )}
                       </span>
                       <span className="font-mono text-[11px]">
                         {computeArenaRating(entry).toLocaleString()}

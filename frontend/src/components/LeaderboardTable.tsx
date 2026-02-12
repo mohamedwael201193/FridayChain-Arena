@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { LeaderboardEntry } from '../lib/arena/types';
+import { isEntrySuspicious } from '../hooks/useSuspiciousMoveDetector';
 import {
   Crown,
   Medal,
@@ -21,6 +22,7 @@ interface LeaderboardTableProps {
   compact?: boolean;
   tournamentStartMicros?: string;
   tournamentEndMicros?: string;
+  isSuspicious?: boolean;
 }
 
 const TOTAL_CELLS_TO_PLACE = 46;
@@ -54,6 +56,7 @@ export default function LeaderboardTable({
   compact = false,
   tournamentStartMicros,
   tournamentEndMicros,
+  isSuspicious = false,
 }: LeaderboardTableProps) {
   const [tick, setTick] = useState(0);
   const timeExpired = tournamentEndMicros
@@ -135,6 +138,11 @@ export default function LeaderboardTable({
             const correctMoves = 'correctMoves' in entry ? (entry as any).correctMoves : Math.max(0, entry.moveCount - (entry.penaltyCount || 0));
             const progressPct = entry.completed ? 100 : Math.round((correctMoves / TOTAL_CELLS_TO_PLACE) * 100);
 
+            // Anti-cheat: flag ANY player with suspicious move pacing
+            const entrySuspicious = (isHighlighted && isSuspicious) ||
+              (tournamentStartMicros && entry.moveCount >= 5 &&
+                isEntrySuspicious(entry.moveCount, tournamentStartMicros, entry.completionTimeMicros, tournamentEndMicros));
+
             return (
               <tr
                 key={entry.wallet}
@@ -162,9 +170,15 @@ export default function LeaderboardTable({
                       {entry.discordUsername.charAt(0).toUpperCase()}
                     </div>
                     <div>
-                      <p className={`font-medium truncate max-w-[140px] ${isHighlighted ? 'text-arena-primary' : ''}`}>
+                      <p className={`font-medium truncate max-w-[140px] flex items-center gap-1 ${isHighlighted ? 'text-arena-primary' : ''}`}>
                         {entry.discordUsername}
-                        {isHighlighted && <span className="text-[10px] text-arena-primary/60 ml-1">(you)</span>}
+                        {isHighlighted && <span className="text-[10px] text-arena-primary/60">(you)</span>}
+                        {entrySuspicious && (
+                          <span className="relative flex h-2 w-2 flex-shrink-0" title="Suspicious move pacing detected">
+                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-500 opacity-75" />
+                            <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500" />
+                          </span>
+                        )}
                       </p>
                       {!compact && (
                         <p className="text-[10px] text-arena-text-dim font-mono truncate max-w-[140px]">

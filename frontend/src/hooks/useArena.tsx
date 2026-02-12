@@ -14,6 +14,7 @@ import React, {
 import * as lineraClient from '../lib/linera/lineraClient';
 import * as metamask from '../lib/metamask/metamaskSigner';
 import * as arenaApi from '../lib/arena/arenaApi';
+import { useSuspiciousMoveDetector } from './useSuspiciousMoveDetector';
 import type {
   ConnectionState,
   PlayerGameState,
@@ -48,6 +49,9 @@ interface ArenaContextValue {
   refreshGameState: () => Promise<void>;
   refreshTournament: () => Promise<void>;
 
+  // Anti-cheat
+  isSuspicious: boolean;
+
   // UI state
   loading: boolean;
   error: string | null;
@@ -77,6 +81,12 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
+
+  // Anti-cheat detector
+  const cheatDetector = useSuspiciousMoveDetector();
+
+  // Track tournament ID to detect changes and clear stale game state
+  const lastTournamentIdRef = useRef<string | null>(null);
 
   // Polling interval ref
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -231,6 +241,7 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
   const placeCellFn = useCallback(
     async (row: number, col: number, value: number): Promise<boolean> => {
       try {
+        cheatDetector.recordMove();
         await arenaApi.placeCell(row, col, value);
         // Refresh game state to see the result
         await refreshGameStateInternal();
@@ -293,30 +304,35 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
       if (gs) {
         setGameState(gs);
         backupGameState(gs);
-      } else if (!gameState) {
-        // Chain returned null — try localStorage backup
-        const backup = restoreGameState();
-        if (backup) {
-          console.log('[Arena] Restored game state from localStorage backup');
-          setGameState(backup);
-        }
+      } else {
+        // Chain returned null — player hasn't started the current tournament yet.
+        // Clear any stale state so the UI shows the fresh puzzle.
+        setGameState(null);
       }
     } catch (e) {
       console.warn('Failed to refresh game state:', e);
-      // On error, try localStorage backup as fallback
-      if (!gameState) {
-        const backup = restoreGameState();
-        if (backup) {
-          console.log('[Arena] Restored game state from localStorage backup (fallback)');
-          setGameState(backup);
-        }
-      }
     }
   };
 
   const refreshTournamentInternal = async () => {
     try {
       const t = await arenaApi.getActiveTournament();
+
+      // Detect tournament change — clear stale game state from previous tournament
+      if (t && t.id !== lastTournamentIdRef.current) {
+        console.log(`[Arena] Tournament changed: ${lastTournamentIdRef.current} → ${t.id}`);
+        lastTournamentIdRef.current = t.id;
+        // Clear old game state so gameplay page shows fresh puzzle
+        setGameState(null);
+        // Clear localStorage backup for this wallet (it belongs to the old tournament)
+        const addr = connection.address;
+        if (addr) {
+          try {
+            localStorage.removeItem(GAMESTATE_KEY + '_' + addr.toLowerCase());
+          } catch { /* ignore */ }
+        }
+      }
+
       setTournament(t);
 
       if (t?.active) {
@@ -387,6 +403,7 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
     clearCell: clearCellFn,
     refreshGameState,
     refreshTournament,
+    isSuspicious: cheatDetector.isSuspicious,
     loading,
     error,
     clearError,

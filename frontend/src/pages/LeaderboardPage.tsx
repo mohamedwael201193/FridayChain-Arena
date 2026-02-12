@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 export default function LeaderboardPage() {
-  const { connection, tournament } = useArena();
+  const { connection, tournament, isSuspicious } = useArena();
   const { isActive } = useTournament();
   const { entries, tournamentId, loading, refresh, lastFetched } =
     useLeaderboard(100);
@@ -87,6 +87,7 @@ export default function LeaderboardPage() {
           highlightWallet={connection.signerAddress}
           tournamentStartMicros={tournament?.startTimeMicros}
           tournamentEndMicros={tournament?.endTimeMicros}
+          isSuspicious={isSuspicious}
         />
       </div>
 

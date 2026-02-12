@@ -109,9 +109,17 @@ export default function SudokuGrid({
   };
 
   return (
-    <div className="flex flex-col items-center gap-4">
-      {/* Grid */}
-      <div className="sudoku-grid w-full max-w-[450px]">
+    <div
+      className="flex flex-col items-center gap-4"
+      style={{ userSelect: 'none', WebkitUserSelect: 'none' }}
+      onContextMenu={(e) => e.preventDefault()}
+      onCopy={(e) => e.preventDefault()}
+    >
+      {/* Grid — anti-copy: no text selection, no right-click, no drag */}
+      <div
+        className="sudoku-grid w-full max-w-[450px]"
+        onDragStart={(e) => e.preventDefault()}
+      >
         {displayBoard.map((row, r) =>
           row.map((cell, c) => (
             <div
