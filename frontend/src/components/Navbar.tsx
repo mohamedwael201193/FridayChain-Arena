@@ -2,6 +2,7 @@
 
 import { Link, useLocation } from 'react-router-dom';
 import { useArena } from '../hooks/useArena';
+import { isMetaMaskInstalled, isMobileDevice } from '../lib/metamask/metamaskSigner';
 import { ConnectionStatus } from '../lib/arena/types';
 import {
   Home,
@@ -16,10 +17,12 @@ import {
 import ArenaLogo from './ArenaLogo';
 
 export default function Navbar() {
-  const { connection, connect, disconnect, player, connectionStep } = useArena();
+  const { connection, connect, connectQuick, disconnect, player, connectionStep } = useArena();
   const location = useLocation();
 
   const isActive = (path: string) => location.pathname === path;
+  const hasMM = isMetaMaskInstalled();
+  const isMobile = isMobileDevice();
 
   return (
     <nav className="border-b border-arena-border/50 bg-arena-surface/60 backdrop-blur-xl sticky top-0 z-50">
@@ -51,8 +54,8 @@ export default function Navbar() {
           </NavLink>
         </div>
 
-        {/* Wallet */}
-        <div className="flex items-center gap-3">
+        {/* Wallet / Quick Play */}
+        <div className="flex items-center gap-2">
           {connection.status === ConnectionStatus.Connected && player && (
             <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-arena-primary/10 border border-arena-primary/20">
               <Zap className="w-3.5 h-3.5 text-arena-primary" />
@@ -66,9 +69,13 @@ export default function Navbar() {
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg glass-card">
                 <div className="w-2 h-2 rounded-full bg-arena-success shadow-[0_0_6px_rgba(16,185,129,0.6)]" />
-                <span className="text-xs text-arena-text-muted font-mono hidden sm:block">
-                  {connection.address?.slice(0, 6)}...{connection.address?.slice(-4)}
-                </span>
+                {connection.isQuickPlay ? (
+                  <span className="text-xs text-arena-text-muted hidden sm:block">Quick Play</span>
+                ) : (
+                  <span className="text-xs text-arena-text-muted font-mono hidden sm:block">
+                    {connection.address?.slice(0, 6)}...{connection.address?.slice(-4)}
+                  </span>
+                )}
               </div>
               <button
                 onClick={disconnect}
@@ -79,25 +86,44 @@ export default function Navbar() {
               </button>
             </div>
           ) : (
-            <button
-              onClick={connect}
-              disabled={connection.status === ConnectionStatus.Connecting}
-              className="flex items-center gap-2 px-4 py-2 rounded-xl btn-glow text-white font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed max-w-[280px]"
-            >
-              {connection.status === ConnectionStatus.Connecting ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span className="truncate text-xs">
-                    {connectionStep || 'Connecting...'}
-                  </span>
-                </>
-              ) : (
-                <>
+            <div className="flex items-center gap-2">
+              {/* Quick Play — always shown; primary on mobile / when no MetaMask */}
+              <button
+                onClick={connectQuick}
+                disabled={connection.status === ConnectionStatus.Connecting}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all ${
+                  isMobile || !hasMM
+                    ? 'btn-glow text-white'
+                    : 'glass-card text-arena-text hover:border-arena-accent/40'
+                }`}
+              >
+                {connection.status === ConnectionStatus.Connecting ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="truncate text-xs max-w-[140px]">
+                      {connectionStep || 'Connecting...'}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-4 h-4" />
+                    <span>Quick Play</span>
+                  </>
+                )}
+              </button>
+
+              {/* MetaMask button — only on desktop when MetaMask is available */}
+              {hasMM && !isMobile && (
+                <button
+                  onClick={connect}
+                  disabled={connection.status === ConnectionStatus.Connecting}
+                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl btn-glow text-white font-medium text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
                   <Wallet className="w-4 h-4" />
-                  Connect Wallet
-                </>
+                  <span className="hidden sm:inline">MetaMask</span>
+                </button>
               )}
-            </button>
+            </div>
           )}
         </div>
       </div>

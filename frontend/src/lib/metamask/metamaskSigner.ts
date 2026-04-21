@@ -22,6 +22,21 @@ export function isMetaMaskInstalled(): boolean {
 }
 
 /**
+ * Returns true when running on a mobile device (iOS / Android).
+ */
+export function isMobileDevice(): boolean {
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+}
+
+/**
+ * Returns true when on mobile and MetaMask is NOT available in the browser.
+ * In this case Quick Play is the best connect option.
+ */
+export function isMobileWithoutWallet(): boolean {
+  return isMobileDevice() && !isMetaMaskInstalled();
+}
+
+/**
  * Request MetaMask account connection.
  * Returns the connected EVM address.
  */

@@ -4,7 +4,6 @@
 // and sends mutations for cell placements.
 
 import { useState, useCallback } from 'react';
-import { useArena } from '../hooks/useArena';
 
 interface SudokuGridProps {
   puzzleBoard: number[][];
@@ -108,6 +107,8 @@ export default function SudokuGrid({
     return classes.join(' ');
   };
 
+  const isInteractive = !completed && !!onCellPlace;
+
   return (
     <div
       className="flex flex-col items-center gap-4"
@@ -117,7 +118,7 @@ export default function SudokuGrid({
     >
       {/* Grid — anti-copy: no text selection, no right-click, no drag */}
       <div
-        className="sudoku-grid w-full max-w-[450px]"
+        className="sudoku-grid w-full max-w-[min(450px,calc(100vw-2rem))]"
         onDragStart={(e) => e.preventDefault()}
       >
         {displayBoard.map((row, r) =>
@@ -133,9 +134,9 @@ export default function SudokuGrid({
         )}
       </div>
 
-      {/* Number Picker */}
-      {!completed && selectedCell && (
-        <div className="animate-slide-up">
+      {/* Desktop number picker: appears below grid when a cell is selected */}
+      {isInteractive && selectedCell && (
+        <div className="hidden md:block animate-slide-up">
           <p className="text-sm text-arena-text-muted mb-2 text-center">
             Select a number for cell ({selectedCell[0] + 1},{' '}
             {selectedCell[1] + 1})
@@ -164,6 +165,48 @@ export default function SudokuGrid({
               className="px-4 py-1.5 text-xs rounded-lg border border-arena-border text-arena-text-muted hover:border-arena-text hover:text-arena-text transition-all"
             >
               Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mobile number pad: always visible during active game */}
+      {isInteractive && (
+        <div className="md:hidden w-full max-w-[min(450px,calc(100vw-2rem))]">
+          {selectedCell ? (
+            <p className="text-xs text-arena-accent text-center mb-2 font-medium">
+              Cell ({selectedCell[0] + 1}, {selectedCell[1] + 1}) selected
+            </p>
+          ) : (
+            <p className="text-xs text-arena-text-dim text-center mb-2">
+              Tap a cell, then pick a number
+            </p>
+          )}
+          <div className="grid grid-cols-5 gap-2">
+            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => (
+              <button
+                key={n}
+                className={`py-3 rounded-xl text-lg font-bold transition-all ${
+                  selectedCell
+                    ? 'bg-arena-primary/20 border border-arena-primary/40 text-arena-primary active:scale-95 active:bg-arena-primary/40'
+                    : 'bg-arena-card/30 border border-arena-border/30 text-arena-text-muted'
+                }`}
+                onClick={() => handleNumberSelect(n)}
+                disabled={!selectedCell || processingCell !== null}
+              >
+                {n}
+              </button>
+            ))}
+            <button
+              className={`py-3 rounded-xl text-xs font-semibold transition-all ${
+                selectedCell
+                  ? 'bg-arena-error/10 border border-arena-error/30 text-arena-error active:scale-95 active:bg-arena-error/30'
+                  : 'bg-arena-card/30 border border-arena-border/30 text-arena-text-dim'
+              }`}
+              onClick={handleClear}
+              disabled={!selectedCell || processingCell !== null}
+            >
+              Clear
             </button>
           </div>
         </div>

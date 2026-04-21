@@ -116,8 +116,12 @@ export enum ConnectionStatus {
 
 export interface ConnectionState {
   status: ConnectionStatus;
-  address: string | null;      // MetaMask EVM address (display identity)
+  address: string | null;       // Display address (EVM for MetaMask, signer for Quick Play)
   signerAddress: string | null; // On-chain signer address
   chainId: string | null;
   error: string | null;
+  /** True when connected without MetaMask (Quick Play mode) */
+  isQuickPlay?: boolean;
+  /** localStorage key for session/game-state ops (evmAddress or Quick Play device ID) */
+  storageKey?: string | null;
 }

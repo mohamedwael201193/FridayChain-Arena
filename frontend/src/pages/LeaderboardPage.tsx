@@ -19,7 +19,7 @@ import {
 } from 'lucide-react';
 
 export default function LeaderboardPage() {
-  const { connection, tournament, isSuspicious } = useArena();
+  const { connection, connectQuick, connect, tournament, isSuspicious } = useArena();
   const { isActive } = useTournament();
   const { entries, tournamentId, loading, refresh, lastFetched } =
     useLeaderboard(100);
@@ -71,10 +71,29 @@ export default function LeaderboardPage() {
 
       {/* Not connected notice */}
       {connection.status !== ConnectionStatus.Connected && (
-        <div className="mb-6 glass-card rounded-xl p-5 text-center">
-          <div className="flex items-center justify-center gap-2 text-arena-text-muted text-sm">
-            <Link2 className="w-4 h-4" />
-            Connect your wallet to view the live leaderboard via cross-chain queries
+        <div className="mb-6 glass-card rounded-xl p-5">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div className="flex items-center gap-2 text-arena-text-muted text-sm">
+              <Link2 className="w-4 h-4" />
+              Connect to view the live leaderboard via cross-chain queries
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={connectQuick}
+                disabled={connection.status === ConnectionStatus.Connecting}
+                className="btn-glow px-4 py-2 rounded-xl text-white font-medium text-sm disabled:opacity-50 flex items-center gap-1.5"
+              >
+                <Zap className="w-3.5 h-3.5" />
+                Quick Connect
+              </button>
+              <button
+                onClick={connect}
+                disabled={connection.status === ConnectionStatus.Connecting}
+                className="glass-card px-4 py-2 rounded-xl text-arena-text-muted font-medium text-sm disabled:opacity-50 flex items-center gap-1.5 hover:border-arena-primary/40"
+              >
+                MetaMask
+              </button>
+            </div>
           </div>
         </div>
       )}

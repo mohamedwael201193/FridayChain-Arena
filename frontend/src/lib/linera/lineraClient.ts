@@ -2,8 +2,8 @@
 //
 // Manages the connection between the browser and the Linera network.
 // Uses @linera/client WASM module for trustless, fully client-side chain interaction.
-// Persists the PrivateKey signer in localStorage keyed by MetaMask address
-// so the same on-chain identity survives page reloads.
+// Persists the PrivateKey signer in localStorage keyed by MetaMask address (or Quick
+// Play device ID) so the same on-chain identity survives page reloads.
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let lineraModule: any = null;
@@ -97,6 +97,36 @@ export function getPersistedPlayer(evmAddress: string): { discordUsername: strin
     };
   }
   return null;
+}
+
+// ── Quick Play (no MetaMask) ─────────────────────────────────────────────
+
+/** Stable device-scoped key used as the localStorage identity for Quick Play. */
+const QUICK_DEVICE_KEY = 'fridaychain_quick_device';
+
+/**
+ * Get or create a persistent device ID for Quick Play sessions.
+ * This serves as the localStorage key (replacing the MetaMask EVM address).
+ */
+export function getOrCreateQuickDeviceId(): string {
+  let deviceId = localStorage.getItem(QUICK_DEVICE_KEY);
+  if (!deviceId) {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    deviceId = 'qp_' + Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem(QUICK_DEVICE_KEY, deviceId);
+  }
+  return deviceId;
+}
+
+/**
+ * Connect to Linera without MetaMask — Quick Play mode.
+ * Uses a stable device ID (stored in localStorage) as the session key.
+ * The on-chain identity is still a cryptographic PrivateKey signer.
+ */
+export async function connectToLineraDirect(): Promise<{ chainId: string; signerAddress: string }> {
+  const deviceId = getOrCreateQuickDeviceId();
+  return connectToLinera(deviceId);
 }
 
 // ── Initialization ───────────────────────────────────────────────────────

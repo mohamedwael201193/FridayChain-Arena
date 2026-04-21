@@ -35,6 +35,7 @@ export default function GamePlayPage() {
   const {
     connection,
     connect,
+    connectQuick,
     player,
     registerPlayer,
     tournament,
@@ -137,25 +138,35 @@ export default function GamePlayPage() {
   // ── Not connected ──────────────────────────────────────────────────
 
   if (connection.status !== ConnectionStatus.Connected) {
+    const isConnecting = connection.status === ConnectionStatus.Connecting;
     return (
       <div className="max-w-lg mx-auto text-center py-20 animate-fade-in">
         <div className="glass-card rounded-2xl p-10">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-arena-primary/20 to-arena-primary/5 flex items-center justify-center border border-arena-primary/20 mb-6">
             <Wallet className="w-8 h-8 text-arena-primary" />
           </div>
-          <h1 className="text-3xl font-bold mb-3">Connect to Play</h1>
+          <h1 className="text-3xl font-bold mb-3">Ready to Play?</h1>
           <p className="text-arena-text-muted mb-8 leading-relaxed">
-            Connect your MetaMask wallet to join the tournament and compete on Linera microchains
+            Join the tournament and compete on Linera microchains. No wallet needed for Quick Play!
           </p>
-          <button
-            onClick={connect}
-            disabled={connection.status === ConnectionStatus.Connecting}
-            className="btn-glow px-8 py-3.5 rounded-xl text-white font-semibold text-lg transition-all disabled:opacity-50"
-          >
-            {connection.status === ConnectionStatus.Connecting
-              ? 'Connecting...'
-              : 'Connect MetaMask'}
-          </button>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={connectQuick}
+              disabled={isConnecting}
+              className="btn-glow px-8 py-3.5 rounded-xl text-white font-semibold text-lg transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <Zap className="w-5 h-5" />
+              {isConnecting ? 'Connecting...' : 'Quick Play'}
+            </button>
+            <button
+              onClick={connect}
+              disabled={isConnecting}
+              className="glass-card px-8 py-3 rounded-xl text-arena-text-muted font-medium text-sm transition-all disabled:opacity-50 flex items-center justify-center gap-2 hover:border-arena-primary/40"
+            >
+              <Wallet className="w-4 h-4" />
+              Connect MetaMask
+            </button>
+          </div>
           {connection.error && (
             <p className="mt-4 text-arena-error text-sm">{connection.error}</p>
           )}
@@ -196,7 +207,7 @@ export default function GamePlayPage() {
           </div>
           {error && <p className="mt-4 text-arena-error text-sm">{error}</p>}
           <p className="mt-5 text-[11px] text-arena-text-dim">
-            Your username will be permanently linked to your MetaMask address on the blockchain.
+            Your username will be permanently linked to your on-chain identity.
           </p>
         </div>
       </div>
@@ -357,7 +368,7 @@ export default function GamePlayPage() {
       )}
 
       {/* Game area */}
-      <div className="grid md:grid-cols-[1fr_280px] gap-8">
+      <div className="flex flex-col md:grid md:grid-cols-[1fr_280px] gap-6 md:gap-8">
         {/* Sudoku Grid */}
         <div>
           {puzzleBoard ? (

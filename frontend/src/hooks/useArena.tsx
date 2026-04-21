@@ -29,7 +29,9 @@ interface ArenaContextValue {
   // Connection
   connection: ConnectionState;
   connect: () => Promise<void>;
+  connectQuick: () => Promise<void>;
   disconnect: () => void;
+  isInitializing: boolean;
 
   // Player
   player: PlayerInfo | null;
@@ -81,6 +83,8 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectionStep, setConnectionStep] = useState<string | null>(null);
+  // True until first tournament fetch completes after connecting
+  const [isInitializing, setIsInitializing] = useState(false);
 
   // Anti-cheat detector
   const cheatDetector = useSuspiciousMoveDetector();
@@ -92,6 +96,51 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // ── Connect ──────────────────────────────────────────────────────────
+
+  // ── Shared post-connect setup ────────────────────────────────────────
+
+  const afterConnect = async (
+    storageKey: string,
+    displayAddress: string,
+    signerAddr: string,
+    chainId: string,
+    isQuickPlay: boolean,
+  ) => {
+    setConnection({
+      status: ConnectionStatus.Connected,
+      address: displayAddress,
+      signerAddress: signerAddr,
+      chainId,
+      error: null,
+      isQuickPlay,
+      storageKey,
+    });
+
+    // Restore previously registered player from localStorage
+    const persisted = lineraClient.getPersistedPlayer(storageKey);
+    if (persisted) {
+      console.log('[Arena] Restored player from localStorage:', persisted.discordUsername);
+      setPlayer({
+        wallet: signerAddr,
+        discordUsername: persisted.discordUsername,
+        registeredAtMicros: persisted.registeredAt,
+      });
+      arenaApi.registerPlayer(persisted.discordUsername).catch((e) => {
+        console.warn('[Arena] Auto-re-register failed (may be fine):', e);
+      });
+    }
+
+    // Subscribe to Hub chain events (non-blocking)
+    arenaApi.subscribeToHub().catch((e) => {
+      console.warn('Failed to subscribe to hub (may already be subscribed):', e);
+    });
+
+    // Load tournament state — mark as initializing until done
+    setIsInitializing(true);
+    refreshTournamentInternal()
+      .catch(() => console.log('No active tournament'))
+      .finally(() => setIsInitializing(false));
+  };
 
   const connect = useCallback(async () => {
     try {
@@ -107,50 +156,49 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
       const evmAddress = account.address;
       console.log('[Arena] MetaMask connected:', evmAddress);
 
-      // 2. Initialize Linera WASM and connect to Conway testnet
-      //    PrivateKey signer is persisted in localStorage keyed by MetaMask address
+      // 2. Connect to Linera (PrivateKey persisted by MetaMask address)
       setConnectionStep('Connecting to Linera...');
       const result = await lineraClient.connectToLinera(evmAddress);
       setConnectionStep(null);
       console.log('[Arena] Linera connected, chain:', result.chainId, 'signer:', result.signerAddress);
 
-      // Use MetaMask address as the display identity
-      setConnection({
-        status: ConnectionStatus.Connected,
-        address: evmAddress,
-        signerAddress: result.signerAddress,
-        chainId: result.chainId,
-        error: null,
-      });
-
-      // 3. Check localStorage for previously registered player
-      const persisted = lineraClient.getPersistedPlayer(evmAddress);
-      if (persisted) {
-        console.log('[Arena] Restored player from localStorage:', persisted.discordUsername);
-        setPlayer({
-          wallet: evmAddress,
-          discordUsername: persisted.discordUsername,
-          registeredAtMicros: persisted.registeredAt,
-        });
-
-        // Auto-re-register on the new chain (non-blocking, silently)
-        arenaApi.registerPlayer(persisted.discordUsername).catch((e) => {
-          console.warn('[Arena] Auto-re-register failed (may be fine):', e);
-        });
-      }
-
-      // 4. Subscribe to Hub chain events (non-blocking)
-      arenaApi.subscribeToHub().catch((e) => {
-        console.warn('Failed to subscribe to hub (may already be subscribed):', e);
-      });
-
-      // 5. Load tournament state (non-blocking)
-      refreshTournamentInternal().catch(() => {
-        console.log('No active tournament');
-      });
+      await afterConnect(evmAddress, evmAddress, result.signerAddress, result.chainId, false);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Connection failed';
       console.error('[Arena] Connection failed:', message);
+      setConnectionStep(null);
+      setConnection({
+        status: ConnectionStatus.Error,
+        address: null,
+        signerAddress: null,
+        chainId: null,
+        error: message,
+      });
+      setError(message);
+    }
+  }, []);
+
+  // ── Quick Play (no MetaMask) ─────────────────────────────────────────
+
+  const connectQuick = useCallback(async () => {
+    try {
+      setConnection((prev) => ({
+        ...prev,
+        status: ConnectionStatus.Connecting,
+        error: null,
+      }));
+      setConnectionStep('Generating your Linera identity...');
+
+      const deviceId = lineraClient.getOrCreateQuickDeviceId();
+      const result = await lineraClient.connectToLineraDirect();
+      setConnectionStep(null);
+      console.log('[Arena] Quick Play connected, chain:', result.chainId, 'signer:', result.signerAddress);
+
+      // Use signer address as display identity (no MetaMask address available)
+      await afterConnect(deviceId, result.signerAddress, result.signerAddress, result.chainId, true);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Connection failed';
+      console.error('[Arena] Quick Play connection failed:', message);
       setConnectionStep(null);
       setConnection({
         status: ConnectionStatus.Error,
@@ -191,16 +239,16 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
       setError(null);
       try {
         await arenaApi.registerPlayer(discordUsername);
-        // Registration succeeded on-chain.
-        // Set player data locally with MetaMask address as identity.
-        const evmAddr = connection.address || '';
+        // Use signerAddress as wallet identity (works for both MetaMask and Quick Play)
+        const walletAddr = connection.signerAddress || connection.address || '';
         setPlayer({
-          wallet: evmAddr,
+          wallet: walletAddr,
           discordUsername,
           registeredAtMicros: String(Date.now() * 1000),
         });
-        // Persist to localStorage so it survives page reloads
-        lineraClient.persistPlayerRegistration(evmAddr, discordUsername);
+        // Persist to localStorage keyed by storageKey (MetaMask addr or Quick Play device ID)
+        const storageKey = connection.storageKey || connection.address || '';
+        lineraClient.persistPlayerRegistration(storageKey, discordUsername);
         console.log('[Arena] Player registered successfully:', discordUsername);
       } catch (err) {
         const message = err instanceof Error ? err.message : 'Registration failed';
@@ -210,7 +258,7 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
         setLoading(false);
       }
     },
-    [connection.address],
+    [connection.signerAddress, connection.address, connection.storageKey],
   );
 
   // ── Update Username ──────────────────────────────────────────────────
@@ -274,22 +322,22 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
 
   const GAMESTATE_KEY = 'fridaychain_arena_gamestate';
 
+  const getStorageKeyForGameState = () =>
+    (connection.storageKey || connection.address || '').toLowerCase();
+
   const backupGameState = (gs: PlayerGameState) => {
-    const addr = connection.address;
-    if (!addr) return;
+    const key = getStorageKeyForGameState();
+    if (!key) return;
     try {
-      localStorage.setItem(
-        GAMESTATE_KEY + '_' + addr.toLowerCase(),
-        JSON.stringify(gs),
-      );
+      localStorage.setItem(GAMESTATE_KEY + '_' + key, JSON.stringify(gs));
     } catch { /* ignore */ }
   };
 
   const restoreGameState = (): PlayerGameState | null => {
-    const addr = connection.address;
-    if (!addr) return null;
+    const key = getStorageKeyForGameState();
+    if (!key) return null;
     try {
-      const raw = localStorage.getItem(GAMESTATE_KEY + '_' + addr.toLowerCase());
+      const raw = localStorage.getItem(GAMESTATE_KEY + '_' + key);
       if (!raw) return null;
       return JSON.parse(raw);
     } catch { return null; }
@@ -324,11 +372,11 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
         lastTournamentIdRef.current = t.id;
         // Clear old game state so gameplay page shows fresh puzzle
         setGameState(null);
-        // Clear localStorage backup for this wallet (it belongs to the old tournament)
-        const addr = connection.address;
-        if (addr) {
+        // Clear localStorage backup (belongs to old tournament)
+        const key = getStorageKeyForGameState();
+        if (key) {
           try {
-            localStorage.removeItem(GAMESTATE_KEY + '_' + addr.toLowerCase());
+            localStorage.removeItem(GAMESTATE_KEY + '_' + key);
           } catch { /* ignore */ }
         }
       }
@@ -392,7 +440,9 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
   const value: ArenaContextValue = {
     connection,
     connect,
+    connectQuick,
     disconnect,
+    isInitializing,
     player,
     registerPlayer: registerPlayerFn,
     updateUsername: updateUsernameFn,
