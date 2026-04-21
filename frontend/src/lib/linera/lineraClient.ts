@@ -325,26 +325,61 @@ export async function mutate(graphqlMutation: string, variables?: Record<string,
 }
 
 /**
+ * Try (re-)initializing the Hub chain app handle.
+ * Called after subscribe or when queryHub fails for a new chain.
+ * Returns true if the handle was successfully obtained.
+ */
+export async function retryHubAppInit(): Promise<boolean> {
+  if (!lineraClient || !APP_ID || !HUB_CHAIN_ID) return false;
+  try {
+    const hubChain = await lineraClient.chain(HUB_CHAIN_ID);
+    hubApp = await hubChain.application(APP_ID);
+    console.log('[Linera] Hub app handle (re)initialized');
+    return true;
+  } catch (err) {
+    console.warn('[Linera] Hub app handle retry failed:', err);
+    return false;
+  }
+}
+
+/**
  * Execute a GraphQL query against the Hub chain's application.
  * Tournament data, leaderboard, and puzzle boards live on the Hub chain,
  * not on the player's chain.
+ *
+ * IMPORTANT: We do NOT fall back to lineraApp (player chain) when hubApp is
+ * unavailable — that would silently return stale genesis data (old tournaments).
+ * Instead we try one re-init attempt and throw if still unavailable so callers
+ * can show a loading state and retry via polling.
  */
 export async function queryHub(graphqlQuery: string, variables?: Record<string, unknown>): Promise<unknown> {
-  const appHandle = hubApp || lineraApp;
-  if (!appHandle) {
-    throw new Error('Linera client not connected. Call connectToLinera() first.');
+  // If hub handle missing, try once to (re-)initialize before giving up
+  if (!hubApp) {
+    const ok = await retryHubAppInit();
+    if (!ok) {
+      throw new Error('Hub chain not reachable yet — will retry');
+    }
   }
 
   const request = gql(graphqlQuery, variables);
-  const response = await appHandle.query(request);
-  const parsed = typeof response === 'string' ? JSON.parse(response) : response;
+  try {
+    const response = await hubApp!.query(request);
+    const parsed = typeof response === 'string' ? JSON.parse(response) : response;
 
-  if (parsed.errors && parsed.errors.length > 0) {
-    console.error('[Linera] Hub query errors:', parsed.errors);
-    throw new Error(parsed.errors[0].message || 'Hub GraphQL query failed');
+    if (parsed.errors && parsed.errors.length > 0) {
+      console.error('[Linera] Hub query errors:', parsed.errors);
+      throw new Error(parsed.errors[0].message || 'Hub GraphQL query failed');
+    }
+
+    return parsed.data;
+  } catch (err) {
+    // If the hub handle became stale, clear it so next call re-inits
+    if (err instanceof Error && (err.message.includes('Blob') || err.message.includes('blob'))) {
+      console.warn('[Linera] Hub app handle stale, clearing for next retry:', err.message);
+      hubApp = null;
+    }
+    throw err;
   }
-
-  return parsed.data;
 }
 
 /**

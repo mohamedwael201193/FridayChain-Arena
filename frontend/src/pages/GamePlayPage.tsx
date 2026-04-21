@@ -47,6 +47,7 @@ export default function GamePlayPage() {
     error,
     clearError,
     isSuspicious,
+    isInitializing,
   } = useArena();
   const { isActive, timeRemainingFormatted, timeRemainingSecs } = useTournament();
   const { entries: leaderboardEntries } = useLeaderboard(10);
@@ -209,6 +210,25 @@ export default function GamePlayPage() {
           <p className="mt-5 text-[11px] text-arena-text-dim">
             Your username will be permanently linked to your on-chain identity.
           </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── Loading Hub data ───────────────────────────────────────────────
+  // Show spinner while fetching tournament from Hub chain on first connect.
+  // This prevents the "No Active Tournament" screen from flashing for new users
+  // while the Hub app handle is being established.
+
+  if (isInitializing) {
+    return (
+      <div className="max-w-lg mx-auto text-center py-20 animate-fade-in">
+        <div className="glass-card rounded-2xl p-10">
+          <div className="w-16 h-16 mx-auto flex items-center justify-center mb-6">
+            <div className="w-12 h-12 border-2 border-arena-primary/30 border-t-arena-primary rounded-full animate-spin" />
+          </div>
+          <h1 className="text-2xl font-bold mb-2">Loading Tournament</h1>
+          <p className="text-arena-text-muted text-sm">Connecting to Hub chain...</p>
         </div>
       </div>
     );

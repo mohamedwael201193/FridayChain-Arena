@@ -130,10 +130,15 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    // Subscribe to Hub chain events (non-blocking)
-    arenaApi.subscribeToHub().catch((e) => {
+    // Subscribe to Hub chain events AND await it — subscription is needed for
+    // Hub chain blob resolution on a brand-new microchain.
+    await arenaApi.subscribeToHub().catch((e) => {
       console.warn('Failed to subscribe to hub (may already be subscribed):', e);
     });
+
+    // Re-attempt Hub app handle after subscribe (new chains often fail on first try
+    // because the Hub chain blob isn't in the local cache yet).
+    await lineraClient.retryHubAppInit();
 
     // Load tournament state — mark as initializing until done
     setIsInitializing(true);
@@ -381,6 +386,9 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
+      // Only update tournament state when we got a successful Hub response.
+      // If t is null it's fine (no active tournament) — set it.
+      // If t is stale (inactive) and we had none before, also set it.
       setTournament(t);
 
       if (t?.active) {
@@ -388,7 +396,10 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
         setPuzzleBoard(board);
       }
     } catch (e) {
-      console.warn('Failed to refresh tournament:', e);
+      // Hub query failed (e.g. new chain, blob not found yet).
+      // Leave tournament state unchanged — polling will retry in 3 seconds.
+      // Do NOT clear tournament to null here or flash stale data.
+      console.warn('[Arena] Hub query failed, will retry:', (e as Error).message);
     }
   };
 
