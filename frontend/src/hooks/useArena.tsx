@@ -140,11 +140,11 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
     // because the Hub chain blob isn't in the local cache yet).
     await lineraClient.retryHubAppInit();
 
-    // Load tournament state — mark as initializing until done
+    // Load tournament state — spinner stays on until refreshTournamentInternal
+    // gets a definitive Hub response (success → setIsInitializing(false)).
+    // On Hub errors the spinner remains so the 3s polling retries silently.
     setIsInitializing(true);
-    refreshTournamentInternal()
-      .catch(() => console.log('No active tournament'))
-      .finally(() => setIsInitializing(false));
+    refreshTournamentInternal().catch(() => {});
   };
 
   const connect = useCallback(async () => {
@@ -230,6 +230,7 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
     setTournament(null);
     setPuzzleBoard(null);
     setGameState(null);
+    setIsInitializing(false);
     if (pollRef.current) {
       clearInterval(pollRef.current);
       pollRef.current = null;
@@ -391,14 +392,18 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
       // If t is stale (inactive) and we had none before, also set it.
       setTournament(t);
 
+      // Hub gave us a definitive answer — stop showing the initializing spinner
+      setIsInitializing(false);
+
       if (t?.active) {
         const board = await arenaApi.getPuzzleBoard();
         setPuzzleBoard(board);
       }
     } catch (e) {
       // Hub query failed (e.g. new chain, blob not found yet).
-      // Leave tournament state unchanged — polling will retry in 3 seconds.
-      // Do NOT clear tournament to null here or flash stale data.
+      // Leave tournament state unchanged AND keep isInitializing = true so the
+      // spinner keeps showing. Polling will retry in 3 seconds.
+      // Do NOT set isInitializing = false here or the stale "No Tournament" flash returns.
       console.warn('[Arena] Hub query failed, will retry:', (e as Error).message);
     }
   };

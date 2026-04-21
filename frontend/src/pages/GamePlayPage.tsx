@@ -141,8 +141,8 @@ export default function GamePlayPage() {
   if (connection.status !== ConnectionStatus.Connected) {
     const isConnecting = connection.status === ConnectionStatus.Connecting;
     return (
-      <div className="max-w-lg mx-auto text-center py-20 animate-fade-in">
-        <div className="glass-card rounded-2xl p-10">
+      <div className="max-w-lg mx-auto text-center py-10 sm:py-20 px-4 animate-fade-in">
+        <div className="glass-card rounded-2xl p-6 sm:p-10">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-arena-primary/20 to-arena-primary/5 flex items-center justify-center border border-arena-primary/20 mb-6">
             <Wallet className="w-8 h-8 text-arena-primary" />
           </div>
@@ -180,8 +180,8 @@ export default function GamePlayPage() {
 
   if (!player) {
     return (
-      <div className="max-w-md mx-auto text-center py-20 animate-fade-in">
-        <div className="glass-card rounded-2xl p-10">
+      <div className="max-w-md mx-auto text-center py-10 sm:py-20 px-4 animate-fade-in">
+        <div className="glass-card rounded-2xl p-6 sm:p-10">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-arena-accent/20 to-arena-accent/5 flex items-center justify-center border border-arena-accent/20 mb-6">
             <UserPlus className="w-8 h-8 text-arena-accent" />
           </div>
@@ -189,19 +189,19 @@ export default function GamePlayPage() {
           <p className="text-arena-text-muted mb-6 leading-relaxed">
             Enter your Discord username to register on-chain
           </p>
-          <div className="flex gap-2">
+          <div className="flex flex-col sm:flex-row gap-2">
             <input
               type="text"
               value={registrationName}
               onChange={(e) => setRegistrationName(e.target.value)}
               placeholder="YourDiscordName"
               maxLength={32}
-              className="flex-1 px-4 py-3 rounded-xl bg-arena-bg/50 border border-arena-border/50 text-arena-text placeholder:text-arena-text-dim focus:outline-none focus:border-arena-primary/50 transition-colors"
+              className="w-full flex-1 px-4 py-3 rounded-xl bg-arena-bg/50 border border-arena-border/50 text-arena-text placeholder:text-arena-text-dim focus:outline-none focus:border-arena-primary/50 transition-colors"
             />
             <button
               onClick={() => registerPlayer(registrationName)}
               disabled={loading || !registrationName.trim()}
-              className="btn-glow px-6 py-3 rounded-xl text-white font-semibold transition-colors disabled:opacity-50"
+              className="w-full sm:w-auto btn-glow px-6 py-3 rounded-xl text-white font-semibold transition-colors disabled:opacity-50"
             >
               {loading ? 'Registering...' : 'Register'}
             </button>
@@ -222,8 +222,8 @@ export default function GamePlayPage() {
 
   if (isInitializing) {
     return (
-      <div className="max-w-lg mx-auto text-center py-20 animate-fade-in">
-        <div className="glass-card rounded-2xl p-10">
+      <div className="max-w-lg mx-auto text-center py-10 sm:py-20 px-4 animate-fade-in">
+        <div className="glass-card rounded-2xl p-6 sm:p-10">
           <div className="w-16 h-16 mx-auto flex items-center justify-center mb-6">
             <div className="w-12 h-12 border-2 border-arena-primary/30 border-t-arena-primary rounded-full animate-spin" />
           </div>
@@ -240,8 +240,8 @@ export default function GamePlayPage() {
 
   if (!tournament || !tournament.active) {
     return (
-      <div className="max-w-lg mx-auto text-center py-20 animate-fade-in">
-        <div className="glass-card rounded-2xl p-10">
+      <div className="max-w-lg mx-auto text-center py-10 sm:py-20 px-4 animate-fade-in">
+        <div className="glass-card rounded-2xl p-6 sm:p-10">
           <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-br from-arena-text-dim/20 to-arena-text-dim/5 flex items-center justify-center border border-arena-border/30 mb-6">
             <Clock className="w-8 h-8 text-arena-text-dim" />
           </div>

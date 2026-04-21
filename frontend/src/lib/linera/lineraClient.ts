@@ -353,12 +353,14 @@ export async function retryHubAppInit(): Promise<boolean> {
  * can show a loading state and retry via polling.
  */
 export async function queryHub(graphqlQuery: string, variables?: Record<string, unknown>): Promise<unknown> {
-  // If hub handle missing, try once to (re-)initialize before giving up
-  if (!hubApp) {
-    const ok = await retryHubAppInit();
-    if (!ok) {
-      throw new Error('Hub chain not reachable yet — will retry');
-    }
+  // Always re-initialize the Hub chain application handle before querying.
+  // Hub chain state changes (endTournament, startTournament) happen via external
+  // mutations. The WASM client is only subscribed to the PLAYER chain's notifications,
+  // not the Hub chain's. Re-fetching the app handle on every query ensures we always
+  // see the latest Hub chain state (cost: ~1 extra async call per poll).
+  const ok = await retryHubAppInit();
+  if (!ok) {
+    throw new Error('Hub chain not reachable yet — will retry');
   }
 
   const request = gql(graphqlQuery, variables);
