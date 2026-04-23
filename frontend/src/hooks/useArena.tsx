@@ -130,21 +130,19 @@ export function ArenaProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    // Subscribe to Hub chain events AND await it — subscription is needed for
-    // Hub chain blob resolution on a brand-new microchain.
-    await arenaApi.subscribeToHub().catch((e) => {
-      console.warn('Failed to subscribe to hub (may already be subscribed):', e);
-    });
-
-    // Re-attempt Hub app handle after subscribe (new chains often fail on first try
-    // because the Hub chain blob isn't in the local cache yet).
-    await lineraClient.retryHubAppInit();
-
     // Load tournament state — spinner stays on until refreshTournamentInternal
     // gets a definitive Hub response (success → setIsInitializing(false)).
     // On Hub errors the spinner remains so the 3s polling retries silently.
     setIsInitializing(true);
     refreshTournamentInternal().catch(() => {});
+
+    // Subscribe in the background so the first tournament render does not wait
+    // for a player-chain mutation on brand-new browsers/accounts.
+    arenaApi.subscribeToHub().then(() => {
+      lineraClient.retryHubAppInit().catch(() => {});
+    }).catch((e) => {
+      console.warn('Failed to subscribe to hub (may already be subscribed):', e);
+    });
   };
 
   const connect = useCallback(async () => {

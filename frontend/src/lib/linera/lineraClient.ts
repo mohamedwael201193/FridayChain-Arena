@@ -25,6 +25,65 @@ const FAUCET_URL =
   import.meta.env.VITE_FAUCET_URL || 'https://faucet.testnet-conway.linera.net';
 const APP_ID = import.meta.env.VITE_APP_ID || '';
 const HUB_CHAIN_ID = import.meta.env.VITE_HUB_CHAIN_ID || '';
+const SHOULD_PROXY_VALIDATOR_RPC = !import.meta.env.DEV;
+const VALIDATOR_RPC_PATH_PREFIX = '/rpc.v1.ValidatorNode/';
+const VALIDATOR_RPC_HOST_SUFFIXES = ['.linera.net', '.brightlystake.com'];
+
+let lineraRpcProxyInstalled = false;
+
+function isAllowedValidatorRpcHost(hostname: string): boolean {
+  return VALIDATOR_RPC_HOST_SUFFIXES.some((suffix) => (
+    hostname === suffix.slice(1) || hostname.endsWith(suffix)
+  ));
+}
+
+function shouldProxyLineraValidatorRpc(url: URL): boolean {
+  return (
+    SHOULD_PROXY_VALIDATOR_RPC &&
+    url.protocol === 'https:' &&
+    isAllowedValidatorRpcHost(url.hostname) &&
+    url.pathname.startsWith(VALIDATOR_RPC_PATH_PREFIX)
+  );
+}
+
+function buildLineraRpcProxyUrl(url: URL): string {
+  return `/api/linera-rpc?target=${encodeURIComponent(url.toString())}`;
+}
+
+function installLineraRpcProxy(): void {
+  if (lineraRpcProxyInstalled || typeof window === 'undefined') {
+    return;
+  }
+
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const targetUrl = new URL(request.url, window.location.href);
+
+    if (!shouldProxyLineraValidatorRpc(targetUrl)) {
+      return nativeFetch(input, init);
+    }
+
+    const method = request.method.toUpperCase();
+    const headers = new Headers(request.headers);
+    const body = method === 'GET' || method === 'HEAD'
+      ? undefined
+      : await request.arrayBuffer();
+
+    return nativeFetch(buildLineraRpcProxyUrl(targetUrl), {
+      method,
+      headers,
+      body,
+      signal: request.signal,
+      credentials: 'same-origin',
+      redirect: request.redirect,
+      keepalive: request.keepalive,
+      cache: request.cache,
+    });
+  };
+
+  lineraRpcProxyInstalled = true;
+}
 
 // ── Session Persistence ──────────────────────────────────────────────────
 
@@ -34,6 +93,7 @@ interface StoredSession {
   privateKeyHex: string;
   signerAddress: string;
   evmAddress: string;
+  chainId?: string;
   discordUsername?: string;
   registeredAt?: string;
   appId?: string; // Track which App ID this session belongs to
@@ -173,6 +233,8 @@ export async function initLinera(): Promise<void> {
  * Flow: Faucet → Wallet → PrivateKey (restored or new) → claimChain → Client → Chain → App
  */
 export async function connectToLinera(evmAddress: string): Promise<{ chainId: string; signerAddress: string }> {
+  installLineraRpcProxy();
+
   if (!isInitialized) {
     await initLinera();
   }
@@ -212,31 +274,58 @@ export async function connectToLinera(evmAddress: string): Promise<{ chainId: st
     const owner = signer.address();
     signerAddress = owner.toString();
 
-    // 4. Claim a microchain from the faucet
-    console.log('[Linera] Step 4: Claiming chain from faucet...');
-    const chainId = await faucet.claimChain(wallet, owner);
-    userChainId = chainId.toString();
-    console.log('[Linera] Chain claimed:', userChainId);
+    // 4. Reuse the previously claimed chain when possible.
+    // This avoids claiming a new microchain and replaying the initial setup path
+    // on every reload for the same browser/account.
+    let storedChainId: string | null = stored?.chainId ?? null;
 
-    // 5. Persist session to localStorage (includes App ID for staleness detection)
+    if (storedChainId) {
+      console.log('[Linera] Step 4: Registering stored chain in wallet:', storedChainId);
+      try {
+        await wallet.setOwner(storedChainId, owner);
+      } catch (err) {
+        console.warn('[Linera] Failed to register stored chain, will claim a new one:', err);
+        storedChainId = null;
+      }
+    }
+
+    // 5. Create client connected to the network
+    console.log('[Linera] Step 5: Creating client...');
+    lineraClient = await new lineraModule.Client(wallet, signer, {
+      blanketMessagePolicy: 'Accept',
+    });
+    console.log('[Linera] Client created');
+
+    // 6. Open the stored chain when possible, otherwise claim a new one.
+    if (storedChainId) {
+      try {
+        console.log('[Linera] Step 6: Reusing stored chain:', storedChainId);
+        lineraChain = await lineraClient.chain(storedChainId);
+        userChainId = storedChainId;
+      } catch (err) {
+        console.warn('[Linera] Stored chain unavailable, claiming new chain:', err);
+        storedChainId = null;
+      }
+    }
+
+    if (!storedChainId) {
+      console.log('[Linera] Step 6: Claiming chain from faucet...');
+      const chainId = await faucet.claimChain(wallet, owner);
+      userChainId = chainId.toString();
+      console.log('[Linera] Chain claimed:', userChainId);
+      lineraChain = await lineraClient.chain(userChainId);
+    }
+
+    // 7. Persist session to localStorage (includes App ID for staleness detection)
     storeSession({
       privateKeyHex,
       signerAddress: signerAddress!,
       evmAddress,
+      chainId: userChainId!,
       discordUsername: stored?.discordUsername,
       registeredAt: stored?.registeredAt,
       appId: APP_ID,
     });
-
-    // 6. Create client connected to the network
-    console.log('[Linera] Step 5: Creating client...');
-    lineraClient = await new lineraModule.Client(wallet, signer);
-    console.log('[Linera] Client created');
-
-    // 7. Get the Chain handle
-    console.log('[Linera] Step 6: Getting chain handle...');
-    lineraChain = await lineraClient.chain(userChainId);
-    console.log('[Linera] Chain handle obtained');
 
     // 8. Get the Application handle for queries/mutations on player's chain
     if (APP_ID) {
@@ -353,14 +442,11 @@ export async function retryHubAppInit(): Promise<boolean> {
  * can show a loading state and retry via polling.
  */
 export async function queryHub(graphqlQuery: string, variables?: Record<string, unknown>): Promise<unknown> {
-  // Always re-initialize the Hub chain application handle before querying.
-  // Hub chain state changes (endTournament, startTournament) happen via external
-  // mutations. The WASM client is only subscribed to the PLAYER chain's notifications,
-  // not the Hub chain's. Re-fetching the app handle on every query ensures we always
-  // see the latest Hub chain state (cost: ~1 extra async call per poll).
-  const ok = await retryHubAppInit();
-  if (!ok) {
-    throw new Error('Hub chain not reachable yet — will retry');
+  if (!hubApp) {
+    const ok = await retryHubAppInit();
+    if (!ok) {
+      throw new Error('Hub chain not reachable yet — will retry');
+    }
   }
 
   const request = gql(graphqlQuery, variables);
@@ -375,7 +461,7 @@ export async function queryHub(graphqlQuery: string, variables?: Record<string, 
 
     return parsed.data;
   } catch (err) {
-    // If the hub handle became stale, clear it so next call re-inits
+    // If the hub handle became stale, clear it so the next call re-initializes once.
     if (err instanceof Error && (err.message.includes('Blob') || err.message.includes('blob'))) {
       console.warn('[Linera] Hub app handle stale, clearing for next retry:', err.message);
       hubApp = null;
